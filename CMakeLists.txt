@@ -11,12 +11,14 @@ set(SRCS
     EventLoop.cpp
     EventLoopThread.cpp
     EventLoopThreadPool.cpp
+    GeminiProvider.cpp
     GatewayConfig.cpp
     HttpData.cpp
     LightAgentGateway.cpp
     LlmProvider.cpp
     Main.cpp
     MockProvider.cpp
+    ProviderFactory.cpp
     Server.cpp
     #ThreadPool.cpp
     Timer.cpp

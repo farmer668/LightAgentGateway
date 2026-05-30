@@ -6,8 +6,8 @@
 
 struct GatewayConfig {
   std::string service_name = "LightAgent Gateway";
-  std::string version = "0.2.0";
-  std::string stage = "phase-2";
+  std::string version = "0.3.0";
+  std::string stage = "phase-3";
   std::string default_provider = "mock";
   std::string fallback_provider = "ollama";
   std::optional<std::string> gemini_api_key;

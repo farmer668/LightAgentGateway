@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export GEMINI_API_KEY="replace_with_your_key"
+export LIGHTAGENT_DEFAULT_PROVIDER="gemini"
+export LIGHTAGENT_FALLBACK_PROVIDER="ollama"
+export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+
+# Port 80 usually requires root privileges. sudo does not preserve ordinary
+# user environment variables by default, so either pass variables after sudo:
+#   sudo GEMINI_API_KEY="replace_with_your_key" LIGHTAGENT_DEFAULT_PROVIDER=gemini ./WebServer -p 80 -l /tmp/WebServer.log
+# or run on an unprivileged port:
+#   PORT=8080 ./scripts/start_gateway.sh
+PORT="${PORT:-80}" BIN_PATH="${BIN_PATH:-./WebServer}" ./scripts/start_gateway.sh

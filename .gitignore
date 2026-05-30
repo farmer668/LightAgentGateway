@@ -1,0 +1,9 @@
+config.json
+*.log
+core
+core.*
+build/
+build-*/
+*.o
+WebServer
+scripts/start_gateway_with_env.sh

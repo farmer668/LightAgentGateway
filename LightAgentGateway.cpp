@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "GatewayConfig.h"
-#include "MockProvider.h"
+#include "ProviderFactory.h"
 
 namespace {
 
@@ -33,11 +33,6 @@ GatewayMetrics &metricsState() {
 const GatewayConfig &gatewayConfig() {
   static const GatewayConfig config = GatewayConfig::load();
   return config;
-}
-
-MockProvider &mockProvider() {
-  static MockProvider provider;
-  return provider;
 }
 
 bool startsWith(std::string_view value, std::string_view prefix) {
@@ -251,8 +246,9 @@ LightAgentGateway::Response LightAgentGateway::chat(const Request &request) {
       findJsonStringField(request.body, "session_id"),
       findJsonStringField(request.body, "system_prompt"));
 
-  ILlmProvider &provider = mockProvider();
-  ChatResult result = provider.chat(chatRequest);
+  std::unique_ptr<ILlmProvider> provider =
+      ProviderFactory::create(gatewayConfig());
+  ChatResult result = provider->chat(chatRequest);
 
   const auto latencyMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
@@ -263,7 +259,7 @@ LightAgentGateway::Response LightAgentGateway::chat(const Request &request) {
 
   std::ostringstream body;
   body << "{"
-       << "\"id\":\"mock-chat-1\","
+       << "\"id\":\"lightagent-chat-1\","
        << "\"object\":\"chat.completion\","
        << "\"success\":" << (result.success ? "true" : "false") << ","
        << "\"provider\":\"" << jsonEscape(result.provider) << "\","
@@ -279,7 +275,7 @@ LightAgentGateway::Response LightAgentGateway::chat(const Request &request) {
          << "\"";
   }
   body << "}";
-  return jsonResponse(result.success ? 200 : 500,
-                      result.success ? "OK" : "Internal Server Error",
+  return jsonResponse(result.success ? 200 : 503,
+                      result.success ? "OK" : "Service Unavailable",
                       body.str());
 }
