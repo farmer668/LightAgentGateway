@@ -1,0 +1,2 @@
+D:\vscode\msys2\ucrt64\bin\ar.exe qc libserver_base.a CMakeFiles/libserver_base.dir/AsyncLogging.obj CMakeFiles/libserver_base.dir/CountDownLatch.obj CMakeFiles/libserver_base.dir/FileUtil.obj CMakeFiles/libserver_base.dir/LogFile.obj CMakeFiles/libserver_base.dir/Logging.obj CMakeFiles/libserver_base.dir/LogStream.obj CMakeFiles/libserver_base.dir/Thread.obj
+D:\vscode\msys2\ucrt64\bin\ranlib.exe libserver_base.a

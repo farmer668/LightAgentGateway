@@ -1,0 +1,116 @@
+[
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\Channel.obj -c D:\\tengxun\\WebServer-master\\WebServer\\Channel.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/Channel.cpp",
+  "output": "CMakeFiles/WebServer.dir/Channel.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\Epoll.obj -c D:\\tengxun\\WebServer-master\\WebServer\\Epoll.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/Epoll.cpp",
+  "output": "CMakeFiles/WebServer.dir/Epoll.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\EventLoop.obj -c D:\\tengxun\\WebServer-master\\WebServer\\EventLoop.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/EventLoop.cpp",
+  "output": "CMakeFiles/WebServer.dir/EventLoop.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\EventLoopThread.obj -c D:\\tengxun\\WebServer-master\\WebServer\\EventLoopThread.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/EventLoopThread.cpp",
+  "output": "CMakeFiles/WebServer.dir/EventLoopThread.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\EventLoopThreadPool.obj -c D:\\tengxun\\WebServer-master\\WebServer\\EventLoopThreadPool.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/EventLoopThreadPool.cpp",
+  "output": "CMakeFiles/WebServer.dir/EventLoopThreadPool.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\HttpData.obj -c D:\\tengxun\\WebServer-master\\WebServer\\HttpData.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/HttpData.cpp",
+  "output": "CMakeFiles/WebServer.dir/HttpData.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\Main.obj -c D:\\tengxun\\WebServer-master\\WebServer\\Main.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/Main.cpp",
+  "output": "CMakeFiles/WebServer.dir/Main.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\Server.obj -c D:\\tengxun\\WebServer-master\\WebServer\\Server.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/Server.cpp",
+  "output": "CMakeFiles/WebServer.dir/Server.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\Timer.obj -c D:\\tengxun\\WebServer-master\\WebServer\\Timer.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/Timer.cpp",
+  "output": "CMakeFiles/WebServer.dir/Timer.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/WebServer.dir/includes_CXX.rsp -g -o CMakeFiles\\WebServer.dir\\Util.obj -c D:\\tengxun\\WebServer-master\\WebServer\\Util.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/Util.cpp",
+  "output": "CMakeFiles/WebServer.dir/Util.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/libserver_base.dir/includes_CXX.rsp -g -o CMakeFiles\\libserver_base.dir\\AsyncLogging.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\AsyncLogging.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/AsyncLogging.cpp",
+  "output": "base/CMakeFiles/libserver_base.dir/AsyncLogging.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/libserver_base.dir/includes_CXX.rsp -g -o CMakeFiles\\libserver_base.dir\\CountDownLatch.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\CountDownLatch.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/CountDownLatch.cpp",
+  "output": "base/CMakeFiles/libserver_base.dir/CountDownLatch.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/libserver_base.dir/includes_CXX.rsp -g -o CMakeFiles\\libserver_base.dir\\FileUtil.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\FileUtil.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/FileUtil.cpp",
+  "output": "base/CMakeFiles/libserver_base.dir/FileUtil.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/libserver_base.dir/includes_CXX.rsp -g -o CMakeFiles\\libserver_base.dir\\LogFile.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\LogFile.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/LogFile.cpp",
+  "output": "base/CMakeFiles/libserver_base.dir/LogFile.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/libserver_base.dir/includes_CXX.rsp -g -o CMakeFiles\\libserver_base.dir\\Logging.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\Logging.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/Logging.cpp",
+  "output": "base/CMakeFiles/libserver_base.dir/Logging.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/libserver_base.dir/includes_CXX.rsp -g -o CMakeFiles\\libserver_base.dir\\LogStream.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\LogStream.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/LogStream.cpp",
+  "output": "base/CMakeFiles/libserver_base.dir/LogStream.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/libserver_base.dir/includes_CXX.rsp -g -o CMakeFiles\\libserver_base.dir\\Thread.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\Thread.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/Thread.cpp",
+  "output": "base/CMakeFiles/libserver_base.dir/Thread.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/base/tests",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/LoggingTest.dir/includes_CXX.rsp -g -o CMakeFiles\\LoggingTest.dir\\LoggingTest.obj -c D:\\tengxun\\WebServer-master\\WebServer\\base\\tests\\LoggingTest.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/base/tests/LoggingTest.cpp",
+  "output": "base/tests/CMakeFiles/LoggingTest.dir/LoggingTest.obj"
+},
+{
+  "directory": "D:/tengxun/WebServer-master/WebServer/build/tests",
+  "command": "D:\\vscode\\msys2\\ucrt64\\bin\\g++.exe  @CMakeFiles/HTTPClient.dir/includes_CXX.rsp -g -o CMakeFiles\\HTTPClient.dir\\HTTPClient.obj -c D:\\tengxun\\WebServer-master\\WebServer\\tests\\HTTPClient.cpp",
+  "file": "D:/tengxun/WebServer-master/WebServer/tests/HTTPClient.cpp",
+  "output": "tests/CMakeFiles/HTTPClient.dir/HTTPClient.obj"
+}
+]

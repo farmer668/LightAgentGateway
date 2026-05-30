@@ -1,0 +1,12 @@
+D:/tengxun/WebServer-master/WebServer/build/CMakeFiles/WebServer.dir
+D:/tengxun/WebServer-master/WebServer/build/CMakeFiles/edit_cache.dir
+D:/tengxun/WebServer-master/WebServer/build/CMakeFiles/rebuild_cache.dir
+D:/tengxun/WebServer-master/WebServer/build/base/CMakeFiles/libserver_base.dir
+D:/tengxun/WebServer-master/WebServer/build/base/CMakeFiles/edit_cache.dir
+D:/tengxun/WebServer-master/WebServer/build/base/CMakeFiles/rebuild_cache.dir
+D:/tengxun/WebServer-master/WebServer/build/base/tests/CMakeFiles/LoggingTest.dir
+D:/tengxun/WebServer-master/WebServer/build/base/tests/CMakeFiles/edit_cache.dir
+D:/tengxun/WebServer-master/WebServer/build/base/tests/CMakeFiles/rebuild_cache.dir
+D:/tengxun/WebServer-master/WebServer/build/tests/CMakeFiles/HTTPClient.dir
+D:/tengxun/WebServer-master/WebServer/build/tests/CMakeFiles/edit_cache.dir
+D:/tengxun/WebServer-master/WebServer/build/tests/CMakeFiles/rebuild_cache.dir
