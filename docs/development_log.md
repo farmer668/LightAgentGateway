@@ -1217,3 +1217,81 @@ LIGHTAGENT_KB_DIR="./knowledge_base" \
 ```text
 feat: add upstream real ollama streaming support
 ```
+
+## Stage9 Goal
+
+Polish the project documentation so LightAgent Gateway can be presented on
+GitHub, written into a resume, and explained clearly in interviews.
+
+This stage focuses on documentation. It does not add new runtime features and
+does not refactor the C++ Reactor WebServer core.
+
+## Stage9 README Rewrite
+
+Created `README.md` with the following structure:
+
+1. Project Background
+2. Features
+3. Architecture
+4. API Overview
+5. Configuration
+6. Build
+7. Run with Ollama
+8. Run with Gemini
+9. Curl Examples
+10. Verified Results
+11. Development Stages
+12. Known Limitations
+13. Future Work
+14. Resume Highlights
+
+The README highlights what is verified, what is limited by the current VMware
+network, and what should not be overstated.
+
+## Stage9 docs/project_summary.md
+
+Added `docs/project_summary.md` as a concise project overview covering:
+
+- Project positioning
+- Technology stack
+- Core modules
+- API list
+- Verified capabilities
+- Known limitations
+- Interview explanation flow
+- Resume wording
+
+## Stage9 docs/interview_notes.md
+
+Added `docs/interview_notes.md` in Chinese for interview preparation. It covers:
+
+- One-sentence project introduction
+- Why this is a second-stage development instead of a rewrite
+- What Reactor modules were preserved
+- What AI Gateway capabilities were added
+- ProviderFactory design
+- Gemini to Ollama fallback
+- Local file RAG
+- Why vector databases are not used yet
+- Streaming implementation
+- Current limitations and future work
+
+## Stage9 Known Limitations Clarified
+
+The docs now explicitly state:
+
+- The default port is commonly 80 and usually requires `sudo`.
+- Current RAG is keyword search, not vector retrieval.
+- FAISS / Milvus / Chroma are not integrated.
+- Real Gemini answer is pending because the current VM cannot reach Google API
+  endpoints.
+- Ollama upstream `stream=true` is implemented, but downstream token-by-token
+  flush is still limited by the original WebServer response path.
+- `qwen2.5:0.5b` is a lightweight model and answer quality is limited.
+- No real API keys or private local paths are included in the docs.
+
+## Stage9 Suggested Commit Message
+
+```text
+docs: polish readme and project documentation
+```

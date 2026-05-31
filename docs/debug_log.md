@@ -1318,3 +1318,168 @@ curl http://127.0.0.1/api/metrics
 - stream response includes `fallback_from="gemini"` and `fallback_to="ollama"`.
 - stream response includes `stream_mode="upstream_real"`.
 - metrics includes `last_upstream_stream_mode="ollama_stream_true"`.
+
+## Stage9 Documentation Notes
+
+### Issue 1: Documentation Polish, Not Runtime Bug Fix
+
+#### 问题现象
+
+After Stage1 to Stage8, the project had working code and detailed development
+logs, but it still lacked a GitHub-facing README and interview-oriented summary
+documents.
+
+#### 原因分析
+
+The project evolved through multiple stages. Without a consolidated README, it
+is hard to quickly explain:
+
+- what the project is
+- which WebServer modules were preserved
+- which AI Gateway capabilities were added
+- which features are verified
+- which limitations are caused by local network or stage scope
+
+#### 修复方式
+
+Added and updated documentation:
+
+- `README.md`
+- `docs/project_summary.md`
+- `docs/interview_notes.md`
+- Stage9 section in `docs/development_log.md`
+- Stage9 section in `docs/debug_log.md`
+
+### Issue 2: Gemini Network Limitation Must Be Stated Clearly
+
+#### 问题现象
+
+GeminiProvider can read config and perform HTTP request attempts, but the current
+VMware Ubuntu network cannot access `google.com` /
+`generativelanguage.googleapis.com`.
+
+#### 原因分析
+
+This is an environment/network limitation, not an API key parsing problem or
+ProviderFactory routing problem.
+
+#### 修复方式
+
+README and summary docs now state that real Gemini answers are pending in the
+current VM environment, while key detection, missing-key errors, network failure
+errors, and Gemini to Ollama fallback have been verified.
+
+### Issue 3: sudo Environment Variables
+
+#### 问题现象
+
+Running `export GEMINI_API_KEY=...` and then `sudo ./WebServer` may lose the
+environment variable.
+
+#### 原因分析
+
+`sudo` does not preserve normal user environment variables by default.
+
+#### 修复方式
+
+README uses inline sudo environment variables, for example:
+
+```bash
+sudo GEMINI_API_KEY="your_key" \
+LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+./WebServer
+```
+
+### Issue 4: Port 80 Requires sudo
+
+#### 问题现象
+
+Normal users may fail to start the server when it listens on port 80.
+
+#### 原因分析
+
+Binding to privileged ports below 1024 usually requires elevated permissions on
+Linux.
+
+#### 修复方式
+
+README and project summary now mention that the current default port commonly
+requires `sudo`, and future work includes changing the development port to 8080.
+
+### Issue 5: GitHub 443 Network Fluctuation
+
+#### 问题现象
+
+Syncing code with `git pull` may be blocked or slow if GitHub 443 access is
+unstable in the VM.
+
+#### 原因分析
+
+This is an environment network issue outside the gateway runtime.
+
+#### 修复方式
+
+The final instructions mention that code can also be synchronized via VMware
+shared folders or rsync when GitHub 443 is blocked.
+
+### Issue 6: Ollama Service Already Running
+
+#### 问题现象
+
+Running `ollama serve` manually may fail because port `11434` is already in use.
+
+#### 原因分析
+
+Ollama may already be running as a systemd service.
+
+#### 修复方式
+
+README recommends checking:
+
+```bash
+systemctl status ollama
+curl http://127.0.0.1:11434/api/tags
+```
+
+before starting or debugging Ollama manually.
+
+### Issue 7: RAG Chinese Search Initial Limitation
+
+#### 问题现象
+
+The initial local RAG keyword search worked better for English queries than for
+Chinese natural language questions such as `什么是 RAG？`.
+
+#### 原因分析
+
+The initial search used simple string matching and space-based tokenization.
+Chinese punctuation and no-space queries made terms like `RAG？` hard to match.
+
+#### 修复方式
+
+The docs now record the implemented normalization:
+
+- lowercase ASCII
+- remove Chinese and English punctuation
+- extract English/digit technical terms from Chinese text
+- score content, title, and file path
+
+### Issue 8: Stream Token Granularity
+
+#### 问题现象
+
+Stage8 supports Ollama upstream real streaming, but downstream client behavior is
+still not a strict token-by-token flush from the Reactor write loop.
+
+#### 原因分析
+
+The original WebServer response path builds a complete response body. True
+downstream streaming would require deeper write-path changes.
+
+#### 修复方式
+
+README and docs now state the accurate scope:
+
+- upstream Ollama `stream=true` is implemented
+- downstream response is SSE-style and may still be buffered
+- real downstream flush is future work
