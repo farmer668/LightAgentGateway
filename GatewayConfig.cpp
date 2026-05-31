@@ -1,5 +1,6 @@
 #include "GatewayConfig.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -31,6 +32,20 @@ std::string trim(std::string_view value) {
   if (begin == std::string_view::npos) return "";
   const auto end = value.find_last_not_of(" \t\r\n");
   return std::string(value.substr(begin, end - begin + 1));
+}
+
+std::optional<bool> parseBool(std::string_view value) {
+  std::string normalized = trim(value);
+  for (char &ch : normalized) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  if (normalized == "true" || normalized == "1" || normalized == "yes") {
+    return true;
+  }
+  if (normalized == "false" || normalized == "0" || normalized == "no") {
+    return false;
+  }
+  return std::nullopt;
 }
 
 std::string unquote(std::string value) {
@@ -125,12 +140,18 @@ void applyValue(GatewayConfig &config, const std::string &key,
     config.fallback_provider = value;
   } else if (key == "gemini_api_key") {
     if (!value.empty()) config.gemini_api_key = value;
+  } else if (key == "gemini_model") {
+    config.gemini_model = value;
+  } else if (key == "gemini_api_base") {
+    config.gemini_api_base = value;
   } else if (key == "ollama_base_url") {
     config.ollama_base_url = value;
   } else if (key == "static_root") {
     config.static_root = value;
   } else if (key == "request_timeout_ms") {
     if (auto parsed = parseInt(value)) config.request_timeout_ms = *parsed;
+  } else if (key == "enable_real_gemini") {
+    if (auto parsed = parseBool(value)) config.enable_real_gemini = *parsed;
   }
 }
 
@@ -142,9 +163,12 @@ void applyEnv(GatewayConfig &config) {
       {"default_provider", "LIGHTAGENT_DEFAULT_PROVIDER"},
       {"fallback_provider", "LIGHTAGENT_FALLBACK_PROVIDER"},
       {"gemini_api_key", "GEMINI_API_KEY"},
+      {"gemini_model", "GEMINI_MODEL"},
+      {"gemini_api_base", "GEMINI_API_BASE"},
       {"ollama_base_url", "OLLAMA_BASE_URL"},
       {"static_root", "LIGHTAGENT_STATIC_ROOT"},
       {"request_timeout_ms", "LIGHTAGENT_REQUEST_TIMEOUT_MS"},
+      {"enable_real_gemini", "LIGHTAGENT_ENABLE_REAL_GEMINI"},
   };
 
   for (const auto &[key, envName] : envKeys) {

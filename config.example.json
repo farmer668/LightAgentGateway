@@ -1,10 +1,13 @@
 {
   "service_name": "LightAgent Gateway",
-  "version": "0.3.0",
-  "stage": "phase-3",
+  "version": "0.4.0",
+  "stage": "phase-4",
   "default_provider": "mock",
   "fallback_provider": "ollama",
   "gemini_api_key": "",
+  "gemini_model": "gemini-1.5-flash",
+  "gemini_api_base": "https://generativelanguage.googleapis.com/v1beta",
   "ollama_base_url": "http://127.0.0.1:11434",
-  "request_timeout_ms": 30000
+  "request_timeout_ms": 30000,
+  "enable_real_gemini": true
 }

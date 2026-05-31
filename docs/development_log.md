@@ -133,3 +133,178 @@ curl -i -X POST http://127.0.0.1:8080/api/chat \
 ```text
 Add Stage 3 Gemini provider skeleton and provider factory
 ```
+
+## Stage 4 Goal
+
+Implement the real Gemini HTTPS call path for `default_provider=gemini` while
+preserving the existing Reactor WebServer architecture and all Stage 1-3
+endpoints.
+
+## Stage 4 Modified Files
+
+- `CMakeLists.txt`
+- `Makefile`
+- `Makefile.bak`
+- `GatewayConfig.h`
+- `GatewayConfig.cpp`
+- `GeminiProvider.h`
+- `GeminiProvider.cpp`
+- `LightAgentGateway.cpp`
+- `JsonUtil.h`
+- `JsonUtil.cpp`
+- `HttpClient.h`
+- `HttpClient.cpp`
+- `.gitignore`
+- `config.example.json`
+- `scripts/start_gateway_with_env.sh.example`
+- `docs/development_log.md`
+- `docs/debug_log.md`
+
+## Stage 4 New Classes / Structs / Functions
+
+- `HttpResponse`
+- `HttpClient`
+  - `HttpClient::postJson(...)`
+- JSON helpers:
+  - `escapeJsonString`
+  - `extractJsonStringField`
+  - `extractGeminiText`
+  - `buildErrorJson`
+  - `buildChatJson`
+- `GeminiProvider::chat` now performs the real Gemini HTTP POST when enabled.
+
+## Stage 4 API Changes
+
+- `POST /api/chat` with `default_provider=mock` still returns MockProvider
+  output.
+- `POST /api/chat` with `default_provider=gemini` and no key returns:
+  - `success: false`
+  - `provider: "gemini"`
+  - `error_message: "GEMINI_API_KEY is not configured"`
+- `POST /api/chat` with `default_provider=gemini` and a key calls Gemini
+  `generateContent`.
+- Missing or empty `message` returns structured JSON with:
+  - `success: false`
+  - `error_message: "message field is required"`
+- `GET /api/health` includes:
+  - `gemini_model`
+  - `gemini_api_base`
+  - `enable_real_gemini`
+- `GET /api/metrics` includes:
+  - `last_chat_success`
+  - `last_chat_error`
+
+## Stage 4 Config Changes
+
+- Default `version` is `0.4.0`.
+- Default `stage` is `phase-4`.
+- Added:
+  - `gemini_model`, default `gemini-1.5-flash`
+  - `gemini_api_base`, default `https://generativelanguage.googleapis.com/v1beta`
+  - `enable_real_gemini`, default `true`
+- Added environment variables:
+  - `GEMINI_MODEL`
+  - `GEMINI_API_BASE`
+  - `LIGHTAGENT_ENABLE_REAL_GEMINI`
+
+## Stage 4 Build Commands
+
+Install dependency:
+
+```bash
+sudo apt update
+sudo apt install -y libcurl4-openssl-dev
+```
+
+Build:
+
+```bash
+make clean
+make
+```
+
+Or:
+
+```bash
+cmake -S . -B build
+cmake --build build --target WebServer -j 4
+```
+
+## Stage 4 Runtime Commands
+
+Mock provider:
+
+```bash
+sudo ./WebServer
+```
+
+Gemini provider:
+
+```bash
+sudo GEMINI_API_KEY="test_or_real_key" \
+  LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+  ./WebServer
+```
+
+Development port:
+
+```bash
+LIGHTAGENT_DEFAULT_PROVIDER="gemini" GEMINI_API_KEY="test_or_real_key" \
+  ./WebServer -p 8080 -l /tmp/WebServer.log
+```
+
+## Stage 4 Curl Test Commands
+
+```bash
+curl http://127.0.0.1/hello
+curl http://127.0.0.1/favicon.ico
+curl http://127.0.0.1/api/health
+curl http://127.0.0.1/api/metrics
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello from mock"}'
+```
+
+Gemini:
+
+```bash
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"用一句话介绍一下什么是 RAG"}'
+```
+
+Gemini without key:
+
+```bash
+sudo LIGHTAGENT_DEFAULT_PROVIDER="gemini" ./WebServer
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello"}'
+```
+
+## Stage 4 Verification Checklist
+
+- `GET /hello` still returns 200.
+- `GET /favicon.ico` still returns 200.
+- `GET /api/health` returns phase-4 config fields and never returns the API key.
+- `GET /api/metrics` updates after chat calls.
+- Mock chat returns `provider: "mock"` and `success: true`.
+- Gemini without key returns `success: false` and a safe error.
+- Gemini with key attempts a real HTTPS call through libcurl.
+- Gemini non-2xx or JSON parse failure returns structured JSON and does not
+  crash the WebServer.
+
+## Stage 4 Known Limitations
+
+- JSON handling is still lightweight and not a complete JSON parser.
+- Gemini response parsing searches for the first string field named `text`.
+- No streaming output is implemented.
+- No RAG endpoint is implemented.
+- No real Ollama call is implemented.
+- No retry/backoff/circuit breaker is implemented for Gemini calls.
+
+## Stage 4 Suggested Commit Message
+
+```text
+Implement Stage 4 Gemini HTTP provider path
+```

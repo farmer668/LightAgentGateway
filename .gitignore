@@ -6,4 +6,6 @@ build/
 build-*/
 *.o
 WebServer
+HTTPClient
+LoggingTest
 scripts/start_gateway_with_env.sh

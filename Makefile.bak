@@ -11,7 +11,7 @@ OBJS    := $(patsubst %.cpp,%.o,$(SOURCE))
 
 TARGET  := WebServer
 CC      := g++
-LIBS    := -lpthread -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs
+LIBS    := -lpthread -lcurl -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs
 INCLUDE:= -I./usr/local/lib
 CFLAGS  := -std=c++17 -g -Wall -O3 -D_PTHREADS
 CXXFLAGS:= $(CFLAGS)

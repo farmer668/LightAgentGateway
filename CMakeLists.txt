@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(CURL REQUIRED)
+
 set(SRCS
     Channel.cpp
     Epoll.cpp
@@ -13,7 +15,9 @@ set(SRCS
     EventLoopThreadPool.cpp
     GeminiProvider.cpp
     GatewayConfig.cpp
+    HttpClient.cpp
     HttpData.cpp
+    JsonUtil.cpp
     LightAgentGateway.cpp
     LlmProvider.cpp
     Main.cpp
@@ -24,13 +28,13 @@ set(SRCS
     Timer.cpp
     Util.cpp
 )
-include_directories(${PROJECT_SOURCE_DIR}/base)
+include_directories(${PROJECT_SOURCE_DIR}/base ${CURL_INCLUDE_DIRS})
 
 
 add_subdirectory(base)
 
 add_executable(WebServer ${SRCS})
-target_link_libraries(WebServer libserver_base)
+target_link_libraries(WebServer libserver_base ${CURL_LIBRARIES})
 
 
 add_subdirectory(tests)

@@ -15,5 +15,8 @@ class GeminiProvider : public ILlmProvider {
 
  private:
   std::optional<std::string> api_key_;
+  std::string model_;
+  std::string api_base_;
   int request_timeout_ms_;
+  bool enable_real_gemini_;
 };

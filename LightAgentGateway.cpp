@@ -3,11 +3,13 @@
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <utility>
 
 #include "GatewayConfig.h"
+#include "JsonUtil.h"
 #include "ProviderFactory.h"
 
 namespace {
@@ -21,8 +23,10 @@ struct GatewayMetrics {
   std::atomic<unsigned long long> health_requests{0};
   std::atomic<unsigned long long> metrics_requests{0};
   std::atomic<long long> last_chat_latency_ms{0};
+  std::atomic<bool> last_chat_success{false};
   std::mutex last_provider_mutex;
   std::string last_provider = "none";
+  std::string last_chat_error;
 };
 
 GatewayMetrics &metricsState() {
@@ -40,82 +44,6 @@ bool startsWith(std::string_view value, std::string_view prefix) {
          value.compare(0, prefix.size(), prefix) == 0;
 }
 
-std::string jsonEscape(std::string_view value) {
-  std::string escaped;
-  escaped.reserve(value.size() + 8);
-  for (char ch : value) {
-    switch (ch) {
-      case '\\':
-        escaped += "\\\\";
-        break;
-      case '"':
-        escaped += "\\\"";
-        break;
-      case '\n':
-        escaped += "\\n";
-        break;
-      case '\r':
-        escaped += "\\r";
-        break;
-      case '\t':
-        escaped += "\\t";
-        break;
-      default:
-        escaped += ch;
-        break;
-    }
-  }
-  return escaped;
-}
-
-std::optional<std::string> findJsonStringField(std::string_view body,
-                                               std::string_view field) {
-  const std::string quotedField = "\"" + std::string(field) + "\"";
-  size_t pos = body.find(quotedField);
-  if (pos == std::string_view::npos) return std::nullopt;
-
-  pos = body.find(':', pos + quotedField.size());
-  if (pos == std::string_view::npos) return std::nullopt;
-  ++pos;
-  while (pos < body.size() &&
-         (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\r' ||
-          body[pos] == '\n')) {
-    ++pos;
-  }
-  if (pos >= body.size() || body[pos] != '"') return std::nullopt;
-
-  std::string value;
-  bool escaped = false;
-  for (++pos; pos < body.size(); ++pos) {
-    char ch = body[pos];
-    if (escaped) {
-      switch (ch) {
-        case 'n':
-          value += '\n';
-          break;
-        case 'r':
-          value += '\r';
-          break;
-        case 't':
-          value += '\t';
-          break;
-        default:
-          value += ch;
-          break;
-      }
-      escaped = false;
-      continue;
-    }
-    if (ch == '\\') {
-      escaped = true;
-      continue;
-    }
-    if (ch == '"') return value;
-    value += ch;
-  }
-  return std::nullopt;
-}
-
 LightAgentGateway::Response jsonResponse(int statusCode, std::string reason,
                                          std::string body) {
   return {statusCode, std::move(reason), "application/json; charset=utf-8",
@@ -131,16 +59,23 @@ LightAgentGateway::Response methodNotAllowed(std::string_view allow) {
   return jsonResponse(405, "Method Not Allowed", body.str());
 }
 
-void setLastProvider(const std::string &provider) {
+void setLastChatStatus(const std::string &provider, std::string error) {
   auto &metrics = metricsState();
   std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
   metrics.last_provider = provider;
+  metrics.last_chat_error = std::move(error);
 }
 
 std::string getLastProvider() {
   auto &metrics = metricsState();
   std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
   return metrics.last_provider;
+}
+
+std::string getLastChatError() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_chat_error;
 }
 
 }  // namespace
@@ -188,19 +123,25 @@ LightAgentGateway::Response LightAgentGateway::health() {
   std::ostringstream body;
   body << "{"
        << "\"status\":\"ok\","
-       << "\"service\":\"" << jsonEscape(config.service_name) << "\","
-       << "\"version\":\"" << jsonEscape(config.version) << "\","
-       << "\"stage\":\"" << jsonEscape(config.stage) << "\","
-       << "\"provider\":\"" << jsonEscape(config.default_provider) << "\","
+       << "\"service\":\"" << escapeJsonString(config.service_name) << "\","
+       << "\"version\":\"" << escapeJsonString(config.version) << "\","
+       << "\"stage\":\"" << escapeJsonString(config.stage) << "\","
+       << "\"provider\":\"" << escapeJsonString(config.default_provider) << "\","
        << "\"gemini_api_key_configured\":"
        << (config.gemini_api_key.has_value() ? "true" : "false") << ","
-       << "\"fallback_provider\":\"" << jsonEscape(config.fallback_provider)
+       << "\"gemini_model\":\"" << escapeJsonString(config.gemini_model)
        << "\","
-       << "\"ollama_base_url\":\"" << jsonEscape(config.ollama_base_url)
+       << "\"gemini_api_base\":\"" << escapeJsonString(config.gemini_api_base)
+       << "\","
+       << "\"fallback_provider\":\"" << escapeJsonString(config.fallback_provider)
+       << "\","
+       << "\"ollama_base_url\":\"" << escapeJsonString(config.ollama_base_url)
        << "\","
        << "\"static_root\":\""
-       << jsonEscape(config.static_root.generic_string()) << "\","
-       << "\"request_timeout_ms\":" << config.request_timeout_ms
+       << escapeJsonString(config.static_root.generic_string()) << "\","
+       << "\"request_timeout_ms\":" << config.request_timeout_ms << ","
+       << "\"enable_real_gemini\":"
+       << (config.enable_real_gemini ? "true" : "false")
        << "}";
   return jsonResponse(200, "OK", body.str());
 }
@@ -223,16 +164,20 @@ LightAgentGateway::Response LightAgentGateway::metrics() {
 
   std::ostringstream body;
   body << "{"
-       << "\"service\":\"" << jsonEscape(config.service_name) << "\","
-       << "\"version\":\"" << jsonEscape(config.version) << "\","
-       << "\"stage\":\"" << jsonEscape(config.stage) << "\","
+       << "\"service\":\"" << escapeJsonString(config.service_name) << "\","
+       << "\"version\":\"" << escapeJsonString(config.version) << "\","
+       << "\"stage\":\"" << escapeJsonString(config.stage) << "\","
        << "\"uptime_seconds\":" << uptime;
   for (const auto &[name, value] : counters) {
     body << ",\"" << name << "\":" << value;
   }
-  body << ",\"last_provider\":\"" << jsonEscape(getLastProvider()) << "\"";
+  body << ",\"last_provider\":\"" << escapeJsonString(getLastProvider()) << "\"";
   body << ",\"last_chat_latency_ms\":"
        << metrics.last_chat_latency_ms.load();
+  body << ",\"last_chat_success\":"
+       << (metrics.last_chat_success.load() ? "true" : "false");
+  body << ",\"last_chat_error\":\""
+       << escapeJsonString(getLastChatError()) << "\"";
   body << "}";
   return jsonResponse(200, "OK", body.str());
 }
@@ -241,41 +186,41 @@ LightAgentGateway::Response LightAgentGateway::chat(const Request &request) {
   auto &metrics = metricsState();
   const auto started = Clock::now();
 
-  ChatRequest chatRequest = makeChatRequest(
-      findJsonStringField(request.body, "message").value_or("(empty message)"),
-      findJsonStringField(request.body, "session_id"),
-      findJsonStringField(request.body, "system_prompt"));
+  auto message = extractJsonStringField(request.body, "message");
+  ChatRequest chatRequest =
+      makeChatRequest(message.value_or(""),
+                      extractJsonStringField(request.body, "session_id"),
+                      extractJsonStringField(request.body, "system_prompt"));
 
-  std::unique_ptr<ILlmProvider> provider =
-      ProviderFactory::create(gatewayConfig());
-  ChatResult result = provider->chat(chatRequest);
+  ChatResult result;
+  if (!message || message->empty()) {
+    result.answer.clear();
+    result.provider = gatewayConfig().default_provider;
+    result.model = "";
+    result.success = false;
+    result.error_message = "message field is required";
+  } else {
+    std::unique_ptr<ILlmProvider> provider =
+        ProviderFactory::create(gatewayConfig());
+    result = provider->chat(chatRequest);
+  }
 
   const auto latencyMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
                                                             started)
           .count();
   metrics.last_chat_latency_ms = latencyMs;
-  setLastProvider(result.provider);
+  metrics.last_chat_success = result.success;
+  setLastChatStatus(result.provider, result.error_message.value_or(""));
 
-  std::ostringstream body;
-  body << "{"
-       << "\"id\":\"lightagent-chat-1\","
-       << "\"object\":\"chat.completion\","
-       << "\"success\":" << (result.success ? "true" : "false") << ","
-       << "\"provider\":\"" << jsonEscape(result.provider) << "\","
-       << "\"model\":\"" << jsonEscape(result.model) << "\","
-       << "\"answer\":\"" << jsonEscape(result.answer) << "\","
-       << "\"message\":\"" << jsonEscape(chatRequest.message) << "\"";
-  if (chatRequest.session_id) {
-    body << ",\"session_id\":\"" << jsonEscape(*chatRequest.session_id)
-         << "\"";
-  }
-  if (result.error_message) {
-    body << ",\"error_message\":\"" << jsonEscape(*result.error_message)
-         << "\"";
-  }
-  body << "}";
-  return jsonResponse(result.success ? 200 : 503,
-                      result.success ? "OK" : "Service Unavailable",
-                      body.str());
+  const int statusCode =
+      result.success
+          ? 200
+          : (result.error_message == "message field is required" ? 400 : 503);
+  return jsonResponse(statusCode,
+                      result.success
+                          ? "OK"
+                          : (statusCode == 400 ? "Bad Request"
+                                               : "Service Unavailable"),
+                      buildChatJson("lightagent-chat-1", chatRequest, result));
 }

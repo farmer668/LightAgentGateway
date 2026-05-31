@@ -9,7 +9,7 @@ OBJS    := $(patsubst %.cpp,%.o,$(SOURCE))
 
 TARGET  := WebServer
 CC      := g++
-LIBS    := -lpthread
+LIBS    := -lpthread -lcurl
 INCLUDE:= -I./usr/local/lib
 CFLAGS  := -std=c++17 -g -Wall -O3 -D_PTHREADS
 CXXFLAGS:= $(CFLAGS)
