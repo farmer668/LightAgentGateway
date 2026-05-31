@@ -1,43 +1,45 @@
 # LightAgent Gateway
 
-LightAgent Gateway is a lightweight AI application gateway built by extending a C++17 Reactor WebServer. It preserves the original static file service while adding LLM providers, local file based RAG, Gemini to Ollama fallback, metrics, and SSE-style streaming APIs.
+LightAgent Gateway 是一个基于 C++17 Reactor WebServer 二次开发的轻量级 AI 应用网关。项目在保留原有静态资源服务能力的基础上，扩展了 LLM Provider、本地文件型 RAG、Gemini 到 Ollama 的 fallback、运行指标统计，以及 SSE 风格的流式输出接口。
 
-## 1. Project Background
+## 1. 项目背景
 
-This project is based on LinYa/WebServer. The original code focuses on a C++ Reactor WebServer with Epoll, non-blocking sockets, Channel, EventLoop, Timer, and static resource serving.
+本项目基于 LinYa/WebServer 进行二次开发。原项目主要是一个 C++ Reactor WebServer，包含 Epoll、非阻塞 Socket、Channel、EventLoop、Timer 和静态资源服务等能力。
 
-The goal of LightAgent Gateway is not to rewrite the WebServer. Instead, it keeps the existing Reactor foundation and adds an AI Gateway business layer on top:
+LightAgent Gateway 的目标不是重写 WebServer，而是在已有 Reactor 架构之上增加 AI Gateway 业务层：
 
-- keep the original Reactor / Epoll / EventLoop / Channel / Timer modules
-- preserve `/hello`, `/favicon.ico`, and static resource serving
-- add API routing for health, metrics, chat, RAG, and streaming
-- support multiple LLM providers through a provider abstraction
-- provide local Ollama fallback when Gemini is unavailable
+- 保留原有 Reactor / Epoll / EventLoop / Channel / Timer 等底层模块；
+- 保留 `/hello`、`/favicon.ico` 和静态资源访问；
+- 新增 health、metrics、chat、RAG、streaming 等 API 路由；
+- 通过 Provider 抽象支持多种 LLM 后端；
+- 当 Gemini 不可用时，自动 fallback 到本地 Ollama，保证演示和本地开发可用。
 
-## 2. Features
+## 2. 功能特性
 
-- C++17 upgrade
-- Reactor WebServer base preserved
-- Static file serving preserved
-- API Server extension
-- Health check endpoint
-- Runtime metrics endpoint
-- `MockProvider`
-- `GeminiProvider`
-- `OllamaProvider`
-- `ProviderFactory`
-- Gemini failure fallback to local Ollama
-- Local file based RAG
-- Chinese keyword search normalization
-- `POST /api/chat`
-- `POST /api/chat/stream`
-- `POST /api/rag/query`
-- `POST /api/rag/query/stream`
-- Ollama upstream real streaming with `stream=true`
-- JSON structured error handling
-- Development and debug logs in `docs/`
+- 升级到 C++17；
+- 保留 Reactor WebServer 基础架构；
+- 保留原有静态文件服务能力；
+- 扩展 API Server；
+- 支持健康检查接口；
+- 支持运行指标接口；
+- 支持 `MockProvider`；
+- 支持 `GeminiProvider`；
+- 支持 `OllamaProvider`；
+- 支持 `ProviderFactory`；
+- 支持 Gemini 失败后 fallback 到本地 Ollama；
+- 支持本地文件型 RAG；
+- 支持中文问题中英文技术词检索优化；
+- 支持 `POST /api/chat`；
+- 支持 `POST /api/chat/stream`；
+- 支持 `POST /api/rag/query`；
+- 支持 `POST /api/rag/query/stream`；
+- 支持 Ollama 上游真实 `stream=true`；
+- 支持 JSON 结构化错误返回；
+- 维护 `docs/development_log.md` 和 `docs/debug_log.md`。
 
-## 3. Architecture
+## 3. 架构说明
+
+整体调用链：
 
 ```text
 Client
@@ -49,7 +51,7 @@ Client
   -> Response / Stream Response
 ```
 
-RAG flow:
+RAG 流程：
 
 ```text
 User Question
@@ -60,7 +62,7 @@ User Question
   -> Answer
 ```
 
-Fallback flow:
+Fallback 流程：
 
 ```text
 GeminiProvider
@@ -70,40 +72,40 @@ GeminiProvider
   -> Answer
 ```
 
-Streaming flow:
+Streaming 流程：
 
 ```text
 Client
-  -> /api/chat/stream or /api/rag/query/stream
+  -> /api/chat/stream 或 /api/rag/query/stream
   -> Ollama stream=true
   -> Upstream JSON lines
   -> SSE-style data chunks
 ```
 
-Stage8 implements upstream real Ollama streaming. The downstream WebServer response is still a buffered SSE-style body because the original Reactor write path has not been refactored for token-by-token flush.
+Stage8 已经实现 Ollama 上游真实流式读取。由于原 WebServer 的写回路径尚未改造成逐 token flush，下游返回目前仍是一次性 buffered SSE-style body。
 
-## 4. API Overview
+## 4. API 概览
 
-| Method | Path | Description |
+| Method | Path | 说明 |
 | --- | --- | --- |
-| GET | `/hello` | Original demo/static endpoint |
-| GET | `/favicon.ico` | Original static resource |
-| GET | `/api/health` | Service health and config summary |
-| GET | `/api/metrics` | Runtime metrics |
-| POST | `/api/chat` | Normal chat completion |
-| POST | `/api/chat/stream` | SSE-style streaming chat |
-| POST | `/api/rag/query` | Local file RAG query |
-| POST | `/api/rag/query/stream` | SSE-style streaming RAG query |
+| GET | `/hello` | 原始 demo/static endpoint |
+| GET | `/favicon.ico` | 原始静态资源 |
+| GET | `/api/health` | 服务健康状态和配置摘要 |
+| GET | `/api/metrics` | 运行时指标 |
+| POST | `/api/chat` | 普通聊天接口 |
+| POST | `/api/chat/stream` | SSE 风格聊天流式接口 |
+| POST | `/api/rag/query` | 本地文件 RAG 查询 |
+| POST | `/api/rag/query/stream` | SSE 风格 RAG 流式查询 |
 
-## 5. Configuration
+## 5. 配置说明
 
-Configuration priority:
+配置优先级：
 
-1. Environment variables
-2. `config.json`
-3. Default values in `GatewayConfig`
+1. 环境变量；
+2. `config.json`；
+3. `GatewayConfig` 中的默认值。
 
-Main environment variables:
+主要环境变量：
 
 - `GEMINI_API_KEY`
 - `LIGHTAGENT_DEFAULT_PROVIDER`
@@ -117,45 +119,45 @@ Main environment variables:
 - `LIGHTAGENT_REQUEST_TIMEOUT_MS`
 - `LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS`
 
-Notes:
+注意事项：
 
-- Do not commit `config.json`.
-- Use `config.example.json` as a template.
-- API keys are not returned in plaintext by `/api/health` or `/api/metrics`.
-- Use environment variables when running with `sudo`, because normal user environment variables may not be preserved by default.
+- 不要提交 `config.json`；
+- 使用 `config.example.json` 作为配置模板；
+- `/api/health` 和 `/api/metrics` 不会明文返回 API Key；
+- 使用 `sudo` 启动时建议把环境变量写在同一条命令里，因为 `sudo` 默认可能不会保留普通用户环境变量。
 
-## 6. Build
+## 6. 编译
 
-Linux dependencies:
+Linux 依赖：
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential make g++ libcurl4-openssl-dev
 ```
 
-Build:
+使用 Makefile 编译：
 
 ```bash
 make clean
 make
 ```
 
-If `make clean` is not available in your local copy:
+如果本地副本中 `make clean` 不可用，可以直接执行：
 
 ```bash
 make
 ```
 
-CMake is also supported:
+也可以使用 CMake：
 
 ```bash
 cmake -S . -B build
 cmake --build build
 ```
 
-## 7. Run with Ollama
+## 7. 使用 Ollama 运行
 
-Install and prepare Ollama:
+安装并准备 Ollama：
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
@@ -165,7 +167,7 @@ ollama list
 curl http://127.0.0.1:11434/api/tags
 ```
 
-Start the gateway:
+启动 Gateway：
 
 ```bash
 sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" \
@@ -175,13 +177,13 @@ LIGHTAGENT_KB_DIR="./knowledge_base" \
 ./WebServer
 ```
 
-Notes:
+说明：
 
-- The current project commonly listens on port 80, so Linux usually requires `sudo`.
-- A future improvement is changing the development port to 8080 to avoid `sudo`.
-- Ollama runs locally at `http://127.0.0.1:11434`.
+- 当前项目通常监听 80 端口，因此 Linux 下通常需要 `sudo`；
+- 后续可以将开发端口改为 8080，避免每次启动都需要 `sudo`；
+- Ollama 默认运行在 `http://127.0.0.1:11434`。
 
-## 8. Run with Gemini
+## 8. 使用 Gemini 运行
 
 ```bash
 sudo GEMINI_API_KEY="your_key" \
@@ -191,27 +193,27 @@ OLLAMA_MODEL="qwen2.5:0.5b" \
 ./WebServer
 ```
 
-Known environment limitation:
+当前环境限制：
 
-- The current VMware Ubuntu environment cannot access `google.com` / `generativelanguage.googleapis.com`.
-- Real Gemini answers have not been verified in that VM network.
-- Verified Gemini-related behavior includes API key detection, missing-key safe errors, network failure structured errors, and Gemini failure fallback to Ollama.
+- 当前 VMware Ubuntu 环境无法访问 `google.com` / `generativelanguage.googleapis.com`；
+- 因此 Gemini 真实 answer 在当前 VM 网络中尚未完成成功验证；
+- 已验证的 Gemini 相关能力包括：API Key 检测、无 Key 安全报错、网络失败结构化错误、Gemini 失败后 fallback 到 Ollama。
 
-## 9. Curl Examples
+## 9. Curl 示例
 
-Health:
+健康检查：
 
 ```bash
 curl http://127.0.0.1/api/health
 ```
 
-Metrics:
+运行指标：
 
 ```bash
 curl http://127.0.0.1/api/metrics
 ```
 
-Chat:
+普通 Chat：
 
 ```bash
 curl -X POST http://127.0.0.1/api/chat \
@@ -219,7 +221,7 @@ curl -X POST http://127.0.0.1/api/chat \
   -d '{"message":"hello"}'
 ```
 
-Chat stream:
+Chat Stream：
 
 ```bash
 curl -N -X POST http://127.0.0.1/api/chat/stream \
@@ -227,7 +229,7 @@ curl -N -X POST http://127.0.0.1/api/chat/stream \
   -d '{"message":"用三句话介绍一下 RAG"}'
 ```
 
-RAG query:
+RAG Query：
 
 ```bash
 curl -X POST http://127.0.0.1/api/rag/query \
@@ -235,7 +237,7 @@ curl -X POST http://127.0.0.1/api/rag/query \
   -d '{"question":"什么是 RAG？","top_k":3}'
 ```
 
-RAG stream:
+RAG Stream：
 
 ```bash
 curl -N -X POST http://127.0.0.1/api/rag/query/stream \
@@ -243,63 +245,63 @@ curl -N -X POST http://127.0.0.1/api/rag/query/stream \
   -d '{"question":"LightAgent Gateway 支持哪些 Provider？","top_k":3}'
 ```
 
-## 10. Verified Results
+## 10. 已验证结果
 
-The project has verified the following behavior during staged development:
+阶段开发过程中已经验证：
 
-- `/api/health` returns the current phase information.
-- `/api/chat` works with Ollama.
-- `/api/rag/query` works with Chinese queries such as `什么是 RAG？`.
-- `/api/chat/stream` returns SSE-style `data:` chunks.
-- `/api/rag/query/stream` returns SSE-style `data:` chunks.
-- Gemini failure can fallback to Ollama.
-- `/api/metrics` records requests, fallback, RAG, and stream metrics.
-- Original `/hello` and `/favicon.ico` are preserved.
+- `/api/health` 可以返回当前阶段信息；
+- `/api/chat` 可以调用本地 Ollama；
+- `/api/rag/query` 可以处理 `什么是 RAG？` 这类中文查询；
+- `/api/chat/stream` 可以返回 SSE-style `data:` chunks；
+- `/api/rag/query/stream` 可以返回 SSE-style `data:` chunks；
+- Gemini 失败后可以 fallback 到 Ollama；
+- `/api/metrics` 可以记录请求数、fallback、RAG 和 stream 指标；
+- 原始 `/hello` 和 `/favicon.ico` 保持可用。
 
-Important notes:
+重要说明：
 
-- Real Gemini answers are pending because the current VM network cannot reach Google API endpoints.
-- Upstream Ollama uses `stream=true`; downstream client streaming is still a buffered SSE-style response.
-- The current RAG implementation intentionally avoids heavyweight vector databases.
+- Gemini 真实 answer 因当前 VM 网络无法访问 Google API endpoint，暂未完成成功验证；
+- 上游 Ollama 已使用 `stream=true`，但下游 client 侧仍是 buffered SSE-style response；
+- 当前 RAG 有意避免引入重量级向量数据库，先保留本地文件关键词检索方案。
 
-## 11. Development Stages
+## 11. 开发阶段
 
-- Stage1: API server extension
-- Stage2: config and provider abstraction
-- Stage3: Gemini provider skeleton
-- Stage4: Gemini HTTP client
-- Stage5: Ollama provider and Gemini fallback
-- Stage6: local file RAG and Chinese keyword search improvements
-- Stage7: pseudo streaming APIs
-- Stage8: upstream real Ollama streaming
-- Stage9: README and project documentation polish
+- Stage1：API Server 扩展；
+- Stage2：配置层和 Provider 抽象；
+- Stage3：GeminiProvider 骨架；
+- Stage4：Gemini HTTP Client；
+- Stage5：OllamaProvider 和 Gemini fallback；
+- Stage6：本地文件型 RAG 和中文关键词检索优化；
+- Stage7：伪流式 API；
+- Stage8：Ollama 上游真实流式读取；
+- Stage9：README 和项目文档整理。
 
-Detailed records:
+详细记录见：
 
 - `docs/development_log.md`
 - `docs/debug_log.md`
 
-## 12. Known Limitations
+## 12. 已知限制
 
-- The current default port is commonly 80, which requires `sudo` on Linux.
-- RAG is local file keyword retrieval, not vector retrieval.
-- FAISS / Milvus / Chroma are not integrated.
-- Real Gemini calls are limited by the current VMware network environment.
-- Upstream Ollama `stream=true` is implemented, but downstream token-by-token flush is limited by the original WebServer response path.
-- `qwen2.5:0.5b` is a lightweight model, so answer quality is limited.
-- JSON parsing is lightweight and not a full JSON parser.
+- 当前默认端口通常是 80，Linux 下需要 `sudo`；
+- RAG 是本地文件关键词检索，不是向量检索；
+- 尚未接入 FAISS / Milvus / Chroma；
+- Gemini 真实调用受当前 VMware 网络环境限制；
+- 上游 Ollama `stream=true` 已实现，但下游逐 token flush 受原 WebServer 响应路径限制；
+- `qwen2.5:0.5b` 是轻量模型，回答质量有限；
+- JSON 解析是轻量实现，不是完整 JSON parser。
 
-## 13. Future Work
+## 13. 后续计划
 
-- Change the default development port from 80 to 8080.
-- Add Dockerfile / docker-compose.
-- Add real vector retrieval.
-- Improve Chinese tokenization.
-- Add a frontend demo page.
-- Implement real downstream streaming flush.
-- Add CI build checks.
-- Add structured logging.
+- 将默认开发端口从 80 改为 8080；
+- 增加 Dockerfile / docker-compose；
+- 接入真正的向量检索；
+- 改进中文分词；
+- 增加前端演示页面；
+- 实现真正的下游 streaming flush；
+- 增加 CI 构建检查；
+- 增加结构化日志。
 
-## 14. Resume Highlights
+## 14. 简历亮点
 
 基于 C++17 对 LinYa/WebServer 进行二次开发，保留原 Reactor / Epoll / 非阻塞 Socket 架构，扩展实现 LightAgent Gateway。新增 LLM Provider 抽象层，支持 Mock、Gemini、Ollama 多 Provider 切换，并实现 Gemini 调用失败自动 fallback 到本地 Ollama；实现本地文件型 RAG 查询接口、中文关键词检索优化、metrics 统计和 SSE 风格流式输出接口；支持 Ollama upstream `stream=true`，适合展示 C++ 网络服务向 AI 应用网关演进的工程化能力。
