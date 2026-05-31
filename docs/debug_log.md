@@ -339,3 +339,254 @@ curl http://127.0.0.1/api/metrics
 #### 验证结果
 
 WebServer 不崩溃，`last_chat_success=false`，`last_chat_error` 记录简短解析错误。
+
+### Issue 5: VMware Ubuntu Cannot Reach Google / Gemini HTTPS 443
+
+#### 问题现象
+
+- `/api/health` 显示 `provider=gemini` 且 `gemini_api_key_configured=true`。
+- `POST /api/chat` 返回 `success=false`。
+- `error_message` 为：
+
+```json
+"Gemini HTTP request failed: Timeout was reached"
+```
+
+- 在虚拟机中直接执行以下命令：
+
+```bash
+curl -I https://www.google.com
+curl -I https://generativelanguage.googleapis.com
+```
+
+均返回类似：
+
+```text
+Failed to connect ... port 443: 拒绝连接
+```
+
+#### 触发命令
+
+```bash
+sudo GEMINI_API_KEY="xxx" LIGHTAGENT_DEFAULT_PROVIDER="gemini" ./WebServer
+curl -i http://127.0.0.1/api/health
+curl -i -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello gemini"}'
+curl -I https://www.google.com
+curl -I https://generativelanguage.googleapis.com
+```
+
+#### 报错信息或异常返回
+
+`/api/chat` 返回结构化错误 JSON，核心字段为：
+
+```json
+{
+  "success": false,
+  "provider": "gemini",
+  "error_message": "Gemini HTTP request failed: Timeout was reached"
+}
+```
+
+直接 curl Google / Gemini API 域名失败：
+
+```text
+Failed to connect ... port 443: 拒绝连接
+```
+
+#### 原因分析
+
+- `GeminiProvider` 已经读取到 API Key，并进入真实 HTTP 调用分支。
+- 失败原因不是 API Key 未配置，也不是 `ProviderFactory` 路由错误。
+- 当前 VMware Ubuntu 无法访问 Google / Gemini API 的 HTTPS 443 端口，因此真实 Gemini 调用无法完成。
+
+#### 临时解决
+
+- 换到可访问 Google API 的网络环境。
+- 或在宿主机配置代理，并让虚拟机走代理。
+- 或后续使用 Ollama 本地模型作为 fallback。
+- 或用 mock provider 完成无外网演示。
+
+#### 验证命令
+
+```bash
+curl -i http://127.0.0.1/api/health
+curl -i -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello gemini"}'
+curl -I https://www.google.com
+curl -I https://generativelanguage.googleapis.com
+```
+
+#### 验证结果
+
+- `/api/health` 能返回 `phase-4`、`provider=gemini`、`gemini_api_key_configured=true`。
+- `/api/chat` 能返回结构化错误 JSON，WebServer 不崩溃。
+- `curl` 直接访问 Google API 域名失败，证明是网络环境问题。
+
+#### 结论
+
+- Stage 4 的 HTTP 调用链、配置读取、错误处理已经验证。
+- 真实 Gemini answer 需要在能访问 `generativelanguage.googleapis.com` 的网络环境中进一步验证。
+
+## Stage 5 Debug Notes
+
+### Issue 1: Ollama Not Installed
+
+#### 问题现象
+
+执行 `ollama` 命令时提示命令不存在。
+
+#### 触发命令
+
+```bash
+ollama serve
+```
+
+#### 报错信息或异常返回
+
+```text
+ollama: command not found
+```
+
+#### 原因分析
+
+当前机器没有安装 Ollama。
+
+#### 修复方式
+
+安装 Ollama。安装完成后重新打开终端或确认 `ollama` 已加入 `PATH`。
+
+#### 验证命令
+
+```bash
+ollama --version
+```
+
+#### 验证结果
+
+能够输出 Ollama 版本。
+
+### Issue 2: Ollama Service Not Running
+
+#### 问题现象
+
+`/api/chat` 返回 `success=false`，错误中包含 connection refused。
+
+#### 触发命令
+
+```bash
+sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" ./WebServer
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello ollama"}'
+```
+
+#### 报错信息或异常返回
+
+```json
+"error_message": "Ollama request failed: Couldn't connect to server"
+```
+
+#### 原因分析
+
+Ollama 本地服务没有启动，`http://127.0.0.1:11434/api/generate` 无法连接。
+
+#### 修复方式
+
+```bash
+ollama serve
+```
+
+#### 验证命令
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+#### 验证结果
+
+Ollama 返回本地模型列表 JSON。
+
+### Issue 3: Ollama Model Not Found
+
+#### 问题现象
+
+`/api/chat` 返回 `success=false`，Ollama 提示模型不存在。
+
+#### 触发命令
+
+```bash
+sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" \
+  OLLAMA_MODEL="qwen2.5:0.5b" \
+  ./WebServer
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello"}'
+```
+
+#### 原因分析
+
+本地还没有拉取配置中的 Ollama 模型。
+
+#### 修复方式
+
+```bash
+ollama pull qwen2.5:0.5b
+```
+
+#### 验证命令
+
+```bash
+ollama list
+```
+
+#### 验证结果
+
+模型列表中出现 `qwen2.5:0.5b`。
+
+### Issue 4: Gemini Network Unavailable, Fallback to Ollama
+
+#### 问题现象
+
+Gemini 返回 timeout 或 connection failed，但 `/api/chat` 继续尝试 Ollama。
+
+#### 触发命令
+
+```bash
+sudo GEMINI_API_KEY="test_or_real_key" \
+  LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+  LIGHTAGENT_ENABLE_OLLAMA_FALLBACK="true" \
+  OLLAMA_MODEL="qwen2.5:0.5b" \
+  ./WebServer
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"用一句话介绍一下什么是 RAG"}'
+```
+
+#### 原因分析
+
+当前 VMware Ubuntu 无法访问 `google.com` /
+`generativelanguage.googleapis.com`，Gemini HTTP 调用失败。
+
+#### 处理方式
+
+当 `enable_ollama_fallback=true` 且 `fallback_provider=ollama` 时，
+Gateway 自动尝试 `OllamaProvider`。
+
+#### 验证命令
+
+```bash
+curl http://127.0.0.1/api/metrics
+```
+
+#### 验证结果
+
+- Gemini 网络失败但 Ollama 正常时，最终响应 `provider` 为 `ollama`。
+- `/api/chat` JSON 中出现 `fallback_from="gemini"` 和 `fallback_to="ollama"`。
+- `/api/metrics` 中 `fallback_count` 增加。
+
+#### 结论
+
+可以在无 Google 网络环境下继续演示本地 AI Gateway 能力。

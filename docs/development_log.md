@@ -308,3 +308,154 @@ curl -X POST http://127.0.0.1/api/chat \
 ```text
 Implement Stage 4 Gemini HTTP provider path
 ```
+
+## Stage 5 Goal
+
+Add local Ollama model support and use Ollama as an optional fallback when
+Gemini fails. Keep the original Reactor WebServer unchanged and preserve all
+existing endpoints.
+
+## Stage 5 Modified Files
+
+- `CMakeLists.txt`
+- `GatewayConfig.h`
+- `GatewayConfig.cpp`
+- `LlmProvider.h`
+- `JsonUtil.h`
+- `JsonUtil.cpp`
+- `ProviderFactory.h`
+- `ProviderFactory.cpp`
+- `LightAgentGateway.cpp`
+- `OllamaProvider.h`
+- `OllamaProvider.cpp`
+- `config.example.json`
+- `scripts/start_gateway_with_env.sh.example`
+- `scripts/start_gateway_ollama.sh.example`
+- `docs/development_log.md`
+- `docs/debug_log.md`
+
+## Stage 5 New Classes / Structs / Functions
+
+- `OllamaProvider`
+  - `OllamaProvider::OllamaProvider(const GatewayConfig&)`
+  - `OllamaProvider::name()`
+  - `OllamaProvider::chat(const ChatRequest&)`
+- `ProviderFactory::create(const GatewayConfig&, const std::string&)`
+- `extractOllamaText`
+- `ChatResult::fallback_from`
+- `ChatResult::fallback_to`
+
+## Stage 5 API Changes
+
+- `default_provider=mock` still returns MockProvider output.
+- `default_provider=ollama` calls local Ollama `/api/generate`.
+- `default_provider=gemini` still calls Gemini first.
+- If Gemini fails and `enable_ollama_fallback=true`, `/api/chat` attempts
+  Ollama fallback.
+- Fallback responses include:
+  - `provider: "ollama"`
+  - `fallback_from: "gemini"`
+  - `fallback_to: "ollama"`
+- Missing or empty `message` still returns structured JSON with
+  `error_message: "message field is required"`.
+
+## Stage 5 Config Changes
+
+- Default `version` is `0.5.0`.
+- Default `stage` is `phase-5`.
+- Added:
+  - `ollama_model`, default `qwen2.5:0.5b`
+  - `enable_real_ollama`, default `true`
+  - `enable_ollama_fallback`, default `true`
+- Added environment variables:
+  - `OLLAMA_MODEL`
+  - `LIGHTAGENT_ENABLE_REAL_OLLAMA`
+  - `LIGHTAGENT_ENABLE_OLLAMA_FALLBACK`
+
+## Stage 5 Build Commands
+
+```bash
+make clean
+make
+```
+
+Or:
+
+```bash
+cmake -S . -B build
+cmake --build build --target WebServer -j 4
+```
+
+## Stage 5 Runtime Commands
+
+Mock provider:
+
+```bash
+sudo LIGHTAGENT_DEFAULT_PROVIDER="mock" ./WebServer
+```
+
+Ollama provider:
+
+```bash
+sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" \
+  OLLAMA_MODEL="qwen2.5:0.5b" \
+  ./WebServer
+```
+
+Gemini with Ollama fallback:
+
+```bash
+sudo GEMINI_API_KEY="test_or_real_key" \
+  LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+  LIGHTAGENT_ENABLE_OLLAMA_FALLBACK="true" \
+  OLLAMA_MODEL="qwen2.5:0.5b" \
+  ./WebServer
+```
+
+## Stage 5 Curl Test Commands
+
+```bash
+curl http://127.0.0.1/api/health
+curl http://127.0.0.1/api/metrics
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello mock"}'
+curl -X POST http://127.0.0.1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"用一句话介绍一下什么是 RAG"}'
+```
+
+## Stage 5 Ollama Setup Commands
+
+```bash
+ollama serve
+ollama pull qwen2.5:0.5b
+```
+
+## Stage 5 Verification Checklist
+
+- `GET /hello` still returns 200.
+- `GET /favicon.ico` still returns 200.
+- `GET /api/health` returns `phase-5`, `ollama_model`, and
+  `enable_ollama_fallback`.
+- `GET /api/metrics` returns `fallback_count`, `last_fallback_from`, and
+  `last_fallback_to`.
+- `default_provider=ollama` returns `provider: "ollama"` on success.
+- Gemini failure with Ollama fallback returns final `provider: "ollama"` and
+  `fallback_from: "gemini"` when Ollama succeeds.
+- If both Gemini and Ollama fail, `/api/chat` returns structured JSON and the
+  WebServer does not crash.
+
+## Stage 5 Known Limitations
+
+- No RAG endpoint is implemented.
+- No streaming output is implemented.
+- Ollama parsing is lightweight and extracts the `response` string field.
+- No retry/backoff/circuit breaker is implemented.
+- No automatic model pulling is implemented.
+
+## Stage 5 Suggested Commit Message
+
+```text
+Add Stage 5 Ollama provider and Gemini fallback
+```

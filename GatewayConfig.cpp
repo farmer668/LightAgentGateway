@@ -146,12 +146,18 @@ void applyValue(GatewayConfig &config, const std::string &key,
     config.gemini_api_base = value;
   } else if (key == "ollama_base_url") {
     config.ollama_base_url = value;
+  } else if (key == "ollama_model") {
+    config.ollama_model = value;
   } else if (key == "static_root") {
     config.static_root = value;
   } else if (key == "request_timeout_ms") {
     if (auto parsed = parseInt(value)) config.request_timeout_ms = *parsed;
   } else if (key == "enable_real_gemini") {
     if (auto parsed = parseBool(value)) config.enable_real_gemini = *parsed;
+  } else if (key == "enable_real_ollama") {
+    if (auto parsed = parseBool(value)) config.enable_real_ollama = *parsed;
+  } else if (key == "enable_ollama_fallback") {
+    if (auto parsed = parseBool(value)) config.enable_ollama_fallback = *parsed;
   }
 }
 
@@ -166,9 +172,12 @@ void applyEnv(GatewayConfig &config) {
       {"gemini_model", "GEMINI_MODEL"},
       {"gemini_api_base", "GEMINI_API_BASE"},
       {"ollama_base_url", "OLLAMA_BASE_URL"},
+      {"ollama_model", "OLLAMA_MODEL"},
       {"static_root", "LIGHTAGENT_STATIC_ROOT"},
       {"request_timeout_ms", "LIGHTAGENT_REQUEST_TIMEOUT_MS"},
       {"enable_real_gemini", "LIGHTAGENT_ENABLE_REAL_GEMINI"},
+      {"enable_real_ollama", "LIGHTAGENT_ENABLE_REAL_OLLAMA"},
+      {"enable_ollama_fallback", "LIGHTAGENT_ENABLE_OLLAMA_FALLBACK"},
   };
 
   for (const auto &[key, envName] : envKeys) {

@@ -22,6 +22,7 @@ set(SRCS
     LlmProvider.cpp
     Main.cpp
     MockProvider.cpp
+    OllamaProvider.cpp
     ProviderFactory.cpp
     Server.cpp
     #ThreadPool.cpp

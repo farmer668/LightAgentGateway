@@ -8,7 +8,7 @@ std::string MockProvider::name() const { return "mock"; }
 
 ChatResult MockProvider::chat(const ChatRequest &request) {
   ChatResult result;
-  result.answer = "This is a mock answer from LightAgent Gateway phase-3.";
+  result.answer = "This is a mock answer from LightAgent Gateway phase-5.";
   if (!request.message.empty()) {
     result.answer += " Received message: " + request.message;
   }

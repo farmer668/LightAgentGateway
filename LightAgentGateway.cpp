@@ -1,7 +1,9 @@
 #include "LightAgentGateway.h"
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -22,11 +24,14 @@ struct GatewayMetrics {
   std::atomic<unsigned long long> chat_requests{0};
   std::atomic<unsigned long long> health_requests{0};
   std::atomic<unsigned long long> metrics_requests{0};
+  std::atomic<unsigned long long> fallback_count{0};
   std::atomic<long long> last_chat_latency_ms{0};
   std::atomic<bool> last_chat_success{false};
   std::mutex last_provider_mutex;
   std::string last_provider = "none";
   std::string last_chat_error;
+  std::string last_fallback_from;
+  std::string last_fallback_to;
 };
 
 GatewayMetrics &metricsState() {
@@ -44,6 +49,14 @@ bool startsWith(std::string_view value, std::string_view prefix) {
          value.compare(0, prefix.size(), prefix) == 0;
 }
 
+std::string lowerCopy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  return value;
+}
+
 LightAgentGateway::Response jsonResponse(int statusCode, std::string reason,
                                          std::string body) {
   return {statusCode, std::move(reason), "application/json; charset=utf-8",
@@ -59,11 +72,14 @@ LightAgentGateway::Response methodNotAllowed(std::string_view allow) {
   return jsonResponse(405, "Method Not Allowed", body.str());
 }
 
-void setLastChatStatus(const std::string &provider, std::string error) {
+void setLastChatStatus(const std::string &provider, std::string error,
+                       std::string fallbackFrom, std::string fallbackTo) {
   auto &metrics = metricsState();
   std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
   metrics.last_provider = provider;
   metrics.last_chat_error = std::move(error);
+  metrics.last_fallback_from = std::move(fallbackFrom);
+  metrics.last_fallback_to = std::move(fallbackTo);
 }
 
 std::string getLastProvider() {
@@ -76,6 +92,49 @@ std::string getLastChatError() {
   auto &metrics = metricsState();
   std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
   return metrics.last_chat_error;
+}
+
+std::string getLastFallbackFrom() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_fallback_from;
+}
+
+std::string getLastFallbackTo() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_fallback_to;
+}
+
+bool shouldFallbackToOllama(const GatewayConfig &config,
+                            const ChatResult &result) {
+  return !result.success && config.enable_ollama_fallback &&
+         lowerCopy(config.default_provider) == "gemini" &&
+         lowerCopy(config.fallback_provider) == "ollama";
+}
+
+ChatResult applyOllamaFallbackIfNeeded(const GatewayConfig &config,
+                                       const ChatRequest &request,
+                                       const ChatResult &primaryResult) {
+  if (!shouldFallbackToOllama(config, primaryResult)) return primaryResult;
+
+  ++metricsState().fallback_count;
+  std::unique_ptr<ILlmProvider> fallbackProvider =
+      ProviderFactory::create(config, "ollama");
+  ChatResult fallbackResult = fallbackProvider->chat(request);
+  fallbackResult.fallback_from = "gemini";
+  fallbackResult.fallback_to = "ollama";
+
+  if (!fallbackResult.success) {
+    const std::string primaryError =
+        primaryResult.error_message.value_or("primary provider failed");
+    const std::string fallbackError =
+        fallbackResult.error_message.value_or("fallback provider failed");
+    fallbackResult.error_message =
+        "Gemini failed: " + primaryError +
+        "; Ollama fallback failed: " + fallbackError;
+  }
+  return fallbackResult;
 }
 
 }  // namespace
@@ -137,11 +196,17 @@ LightAgentGateway::Response LightAgentGateway::health() {
        << "\","
        << "\"ollama_base_url\":\"" << escapeJsonString(config.ollama_base_url)
        << "\","
+       << "\"ollama_model\":\"" << escapeJsonString(config.ollama_model)
+       << "\","
        << "\"static_root\":\""
        << escapeJsonString(config.static_root.generic_string()) << "\","
        << "\"request_timeout_ms\":" << config.request_timeout_ms << ","
        << "\"enable_real_gemini\":"
-       << (config.enable_real_gemini ? "true" : "false")
+       << (config.enable_real_gemini ? "true" : "false") << ","
+       << "\"enable_real_ollama\":"
+       << (config.enable_real_ollama ? "true" : "false") << ","
+       << "\"enable_ollama_fallback\":"
+       << (config.enable_ollama_fallback ? "true" : "false")
        << "}";
   return jsonResponse(200, "OK", body.str());
 }
@@ -160,6 +225,7 @@ LightAgentGateway::Response LightAgentGateway::metrics() {
       {"chat_requests_total", metrics.chat_requests.load()},
       {"health_requests", metrics.health_requests.load()},
       {"metrics_requests", metrics.metrics_requests.load()},
+      {"fallback_count", metrics.fallback_count.load()},
   };
 
   std::ostringstream body;
@@ -178,6 +244,10 @@ LightAgentGateway::Response LightAgentGateway::metrics() {
        << (metrics.last_chat_success.load() ? "true" : "false");
   body << ",\"last_chat_error\":\""
        << escapeJsonString(getLastChatError()) << "\"";
+  body << ",\"last_fallback_from\":\""
+       << escapeJsonString(getLastFallbackFrom()) << "\"";
+  body << ",\"last_fallback_to\":\""
+       << escapeJsonString(getLastFallbackTo()) << "\"";
   body << "}";
   return jsonResponse(200, "OK", body.str());
 }
@@ -200,9 +270,10 @@ LightAgentGateway::Response LightAgentGateway::chat(const Request &request) {
     result.success = false;
     result.error_message = "message field is required";
   } else {
-    std::unique_ptr<ILlmProvider> provider =
-        ProviderFactory::create(gatewayConfig());
-    result = provider->chat(chatRequest);
+    const GatewayConfig &config = gatewayConfig();
+    std::unique_ptr<ILlmProvider> provider = ProviderFactory::create(config);
+    result = applyOllamaFallbackIfNeeded(config, chatRequest,
+                                         provider->chat(chatRequest));
   }
 
   const auto latencyMs =
@@ -211,7 +282,9 @@ LightAgentGateway::Response LightAgentGateway::chat(const Request &request) {
           .count();
   metrics.last_chat_latency_ms = latencyMs;
   metrics.last_chat_success = result.success;
-  setLastChatStatus(result.provider, result.error_message.value_or(""));
+  setLastChatStatus(result.provider, result.error_message.value_or(""),
+                    result.fallback_from.value_or(""),
+                    result.fallback_to.value_or(""));
 
   const int statusCode =
       result.success

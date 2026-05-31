@@ -15,6 +15,8 @@ struct ChatResult {
   std::string model;
   bool success = true;
   std::optional<std::string> error_message;
+  std::optional<std::string> fallback_from;
+  std::optional<std::string> fallback_to;
 };
 
 class ILlmProvider {

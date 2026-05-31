@@ -89,6 +89,10 @@ std::optional<std::string> extractGeminiText(std::string_view responseBody) {
   return extractJsonStringField(responseBody, "text");
 }
 
+std::optional<std::string> extractOllamaText(std::string_view responseBody) {
+  return extractJsonStringField(responseBody, "response");
+}
+
 std::string buildErrorJson(std::string_view errorMessage) {
   std::ostringstream body;
   body << "{"
@@ -115,6 +119,14 @@ std::string buildChatJson(std::string_view id, const ChatRequest &request,
   }
   if (result.error_message) {
     body << ",\"error_message\":\"" << escapeJsonString(*result.error_message)
+         << "\"";
+  }
+  if (result.fallback_from) {
+    body << ",\"fallback_from\":\"" << escapeJsonString(*result.fallback_from)
+         << "\"";
+  }
+  if (result.fallback_to) {
+    body << ",\"fallback_to\":\"" << escapeJsonString(*result.fallback_to)
          << "\"";
   }
   body << "}";

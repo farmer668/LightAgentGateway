@@ -5,6 +5,7 @@
 
 #include "GeminiProvider.h"
 #include "MockProvider.h"
+#include "OllamaProvider.h"
 
 namespace {
 
@@ -18,9 +19,17 @@ std::string lowerCopy(std::string value) {
 
 std::unique_ptr<ILlmProvider> ProviderFactory::create(
     const GatewayConfig &config) {
-  const std::string provider = lowerCopy(config.default_provider);
+  return create(config, config.default_provider);
+}
+
+std::unique_ptr<ILlmProvider> ProviderFactory::create(
+    const GatewayConfig &config, const std::string &providerName) {
+  const std::string provider = lowerCopy(providerName);
   if (provider == "gemini") {
     return std::unique_ptr<ILlmProvider>(new GeminiProvider(config));
+  }
+  if (provider == "ollama") {
+    return std::unique_ptr<ILlmProvider>(new OllamaProvider(config));
   }
   if (provider == "mock") {
     return std::unique_ptr<ILlmProvider>(new MockProvider());

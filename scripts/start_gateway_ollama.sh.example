@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+# Example: start LightAgent Gateway with local Ollama provider.
+#
+# Make sure Ollama is installed and running:
+#   ollama serve
+#
+# Pull a small model first:
+#   ollama pull qwen2.5:0.5b
+#
+# The current project often listens on port 80, which requires sudo.
+# If you run on port 8080 later, sudo is not needed.
+
+export LIGHTAGENT_DEFAULT_PROVIDER="ollama"
+export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+export OLLAMA_MODEL="qwen2.5:0.5b"
+
+sudo LIGHTAGENT_DEFAULT_PROVIDER="${LIGHTAGENT_DEFAULT_PROVIDER}" \
+  OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
+  OLLAMA_MODEL="${OLLAMA_MODEL}" \
+  ./WebServer
