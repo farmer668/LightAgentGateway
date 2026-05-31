@@ -51,7 +51,9 @@ GeminiProvider::GeminiProvider(const GatewayConfig &config)
     : api_key_(config.gemini_api_key),
       model_(config.gemini_model),
       api_base_(trimTrailingSlash(config.gemini_api_base)),
-      request_timeout_ms_(config.request_timeout_ms),
+      request_timeout_ms_(config.gemini_request_timeout_ms > 0
+                              ? config.gemini_request_timeout_ms
+                              : config.request_timeout_ms),
       enable_real_gemini_(config.enable_real_gemini) {}
 
 std::string GeminiProvider::name() const { return "gemini"; }

@@ -164,6 +164,10 @@ void applyValue(GatewayConfig &config, const std::string &key,
     if (auto parsed = parseInt(value)) config.rag_max_context_chars = *parsed;
   } else if (key == "request_timeout_ms") {
     if (auto parsed = parseInt(value)) config.request_timeout_ms = *parsed;
+  } else if (key == "gemini_request_timeout_ms") {
+    if (auto parsed = parseInt(value)) config.gemini_request_timeout_ms = *parsed;
+  } else if (key == "ollama_request_timeout_ms") {
+    if (auto parsed = parseInt(value)) config.ollama_request_timeout_ms = *parsed;
   } else if (key == "enable_real_gemini") {
     if (auto parsed = parseBool(value)) config.enable_real_gemini = *parsed;
   } else if (key == "enable_real_ollama") {
@@ -193,6 +197,8 @@ void applyEnv(GatewayConfig &config) {
       {"rag_provider", "LIGHTAGENT_RAG_PROVIDER"},
       {"rag_max_context_chars", "LIGHTAGENT_RAG_MAX_CONTEXT_CHARS"},
       {"request_timeout_ms", "LIGHTAGENT_REQUEST_TIMEOUT_MS"},
+      {"gemini_request_timeout_ms", "LIGHTAGENT_GEMINI_REQUEST_TIMEOUT_MS"},
+      {"ollama_request_timeout_ms", "LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS"},
       {"enable_real_gemini", "LIGHTAGENT_ENABLE_REAL_GEMINI"},
       {"enable_real_ollama", "LIGHTAGENT_ENABLE_REAL_OLLAMA"},
       {"enable_ollama_fallback", "LIGHTAGENT_ENABLE_OLLAMA_FALLBACK"},
@@ -202,6 +208,13 @@ void applyEnv(GatewayConfig &config) {
     if (auto value = getenvString(envName)) {
       applyValue(config, key, *value);
     }
+  }
+
+  if (auto value = getenvString("GEMINI_REQUEST_TIMEOUT_MS")) {
+    applyValue(config, "gemini_request_timeout_ms", *value);
+  }
+  if (auto value = getenvString("OLLAMA_REQUEST_TIMEOUT_MS")) {
+    applyValue(config, "ollama_request_timeout_ms", *value);
   }
 }
 

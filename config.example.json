@@ -18,5 +18,7 @@
   "rag_chunk_size": 800,
   "rag_enable_llm_answer": true,
   "rag_max_context_chars": 3000,
-  "request_timeout_ms": 30000
+  "request_timeout_ms": 30000,
+  "gemini_request_timeout_ms": 0,
+  "ollama_request_timeout_ms": 30000
 }

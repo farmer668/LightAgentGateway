@@ -24,6 +24,8 @@ struct GatewayConfig {
   std::string rag_provider;
   int rag_max_context_chars = 3000;
   int request_timeout_ms = 30000;
+  int gemini_request_timeout_ms = 0;
+  int ollama_request_timeout_ms = 30000;
   bool enable_real_gemini = true;
   bool enable_real_ollama = true;
   bool enable_ollama_fallback = true;

@@ -317,6 +317,16 @@ LightAgentGateway::Response LightAgentGateway::health() {
        << "\"static_root\":\""
        << escapeJsonString(config.static_root.generic_string()) << "\","
        << "\"request_timeout_ms\":" << config.request_timeout_ms << ","
+       << "\"gemini_request_timeout_ms\":"
+       << (config.gemini_request_timeout_ms > 0
+               ? config.gemini_request_timeout_ms
+               : config.request_timeout_ms)
+       << ","
+       << "\"ollama_request_timeout_ms\":"
+       << (config.ollama_request_timeout_ms > 0
+               ? config.ollama_request_timeout_ms
+               : config.request_timeout_ms)
+       << ","
        << "\"enable_real_gemini\":"
        << (config.enable_real_gemini ? "true" : "false") << ","
        << "\"enable_real_ollama\":"

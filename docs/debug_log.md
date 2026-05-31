@@ -865,3 +865,123 @@ curl -X POST http://127.0.0.1/api/rag/query \
 - `/api/rag/query` 返回 `success=true`、`retrieved_chunks` 非空，并继续调用
   configured provider 生成 answer；当 provider 为 Ollama 且服务正常时，会返回
   Ollama 生成的 answer。
+
+### Issue 7: RAG Gemini Timeout Triggers Ollama Fallback But Final Result Fails
+
+#### 问题现象
+
+Stage 6 中，`default_provider=ollama` 时 RAG 可以成功检索并调用 Ollama；
+但 `default_provider=gemini` 且 Gemini timeout 后，RAG fallback 到 Ollama 的
+响应里出现：
+
+- `fallback_from="gemini"`
+- `fallback_to="ollama"`
+- `provider="ollama"`
+- `success=false`
+- `error_message` 中显示 Gemini timeout 后 Ollama fallback failed
+
+#### 触发命令
+
+```bash
+sudo GEMINI_API_KEY="test_key_123" \
+LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+LIGHTAGENT_ENABLE_OLLAMA_FALLBACK="true" \
+OLLAMA_MODEL="qwen2.5:0.5b" \
+LIGHTAGENT_KB_DIR="./knowledge_base" \
+LIGHTAGENT_REQUEST_TIMEOUT_MS="5000" \
+./WebServer
+
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"LightAgent Gateway 支持哪些 Provider？","top_k":3}'
+```
+
+#### 报错信息或异常返回
+
+```json
+{
+  "success": false,
+  "provider": "ollama",
+  "fallback_from": "gemini",
+  "fallback_to": "ollama",
+  "error_message": "Gemini failed: ...; Ollama fallback failed: ..."
+}
+```
+
+#### 原因分析
+
+排查 `RagEngine` 和 `ProviderFactory` 后确认：
+
+- RAG fallback 分支确实被触发。
+- fallback 分支调用的是同一个 `OllamaProvider`。
+- fallback 分支复用了已经构造好的 RAG `ChatRequest`，没有把 Gemini 错误信息当成 prompt。
+- `ChatRequest.message` 仍然是原始用户问题。
+- `ChatRequest.system_prompt` 仍然是包含 retrieved chunks 的 RAG prompt。
+- `ollama_model` 仍然来自配置中的 `qwen2.5:0.5b`。
+- Ollama response 仍然按 `response` 字段解析。
+
+实际问题是 timeout 配置复用：测试时为了让 Gemini 快速失败，设置了
+`LIGHTAGENT_REQUEST_TIMEOUT_MS=5000`。初版 `OllamaProvider` 也使用同一个
+`request_timeout_ms`，导致 RAG fallback 给 Ollama 的长 prompt 也只有 5 秒生成
+时间。direct Ollama 使用默认 30000ms 时可以成功，但 fallback 测试场景下被
+5 秒 timeout 截断。
+
+#### 修复方式
+
+- 新增 `gemini_request_timeout_ms` 和 `ollama_request_timeout_ms`。
+- 新增环境变量：
+  - `LIGHTAGENT_GEMINI_REQUEST_TIMEOUT_MS`
+  - `LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS`
+  - `GEMINI_REQUEST_TIMEOUT_MS`
+  - `OLLAMA_REQUEST_TIMEOUT_MS`
+- `GeminiProvider` 优先使用 `gemini_request_timeout_ms`，否则使用
+  `request_timeout_ms`。
+- `OllamaProvider` 优先使用 `ollama_request_timeout_ms`，默认 30000ms。
+- `/api/health` 输出 effective Gemini/Ollama timeout，便于现场确认。
+- Ollama fallback 失败时，错误信息增加 safe diagnostics：`base_url`、
+  `model`、`timeout_ms`、HTTP status 和 HttpClient error message，不包含
+  Gemini API Key。
+
+#### 验证命令
+
+```bash
+cd ~/LightAgentGateway
+make clean
+make
+
+systemctl status ollama
+ollama list
+curl http://127.0.0.1:11434/api/tags
+
+sudo pkill WebServer
+
+sudo GEMINI_API_KEY="test_key_123" \
+LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+LIGHTAGENT_ENABLE_OLLAMA_FALLBACK="true" \
+OLLAMA_MODEL="qwen2.5:0.5b" \
+LIGHTAGENT_KB_DIR="./knowledge_base" \
+LIGHTAGENT_REQUEST_TIMEOUT_MS="5000" \
+LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS="30000" \
+./WebServer
+```
+
+Open another VMware Ubuntu terminal:
+
+```bash
+curl http://127.0.0.1/api/health
+
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"LightAgent Gateway 支持哪些 Provider？","top_k":3}'
+
+curl http://127.0.0.1/api/metrics
+```
+
+#### 验证结果预期
+
+- `/api/health` 中 `request_timeout_ms=5000`，`ollama_request_timeout_ms=30000`。
+- `/api/rag/query` 返回 `success=true`。
+- `/api/rag/query` 返回 `provider="ollama"`。
+- `/api/rag/query` 返回 `fallback_from="gemini"` 和 `fallback_to="ollama"`。
+- `/api/rag/query` 返回非空 `retrieved_chunks` 和非空 `answer`。
+- `/api/metrics` 中 `last_rag_success=true`，`last_rag_provider="ollama"`。

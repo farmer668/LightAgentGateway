@@ -678,3 +678,106 @@ curl -X POST http://127.0.0.1/api/rag/query \
 ```text
 fix: improve rag keyword search for Chinese queries
 ```
+
+## Stage 6 RAG Fallback Fix Goal
+
+Repair the RAG path where `default_provider=gemini` correctly triggers
+fallback to Ollama after a Gemini timeout, but the final RAG response still
+returns `success=false`.
+
+## Stage 6 RAG Fallback Fix Modified Files
+
+- `GatewayConfig.h`
+- `GatewayConfig.cpp`
+- `GeminiProvider.cpp`
+- `OllamaProvider.cpp`
+- `LightAgentGateway.cpp`
+- `config.example.json`
+- `scripts/start_gateway_rag_ollama.sh.example`
+- `docs/development_log.md`
+- `docs/debug_log.md`
+
+## Stage 6 RAG Fallback Fix Root Cause
+
+The fallback test used `LIGHTAGENT_REQUEST_TIMEOUT_MS=5000` to make Gemini fail
+quickly in a network-restricted VM. Before this fix, `OllamaProvider` reused the
+same generic timeout, so the local RAG prompt sent to Ollama also had only five
+seconds to complete. Direct Ollama tests with the default timeout could pass,
+while Gemini -> Ollama fallback could still fail.
+
+## Stage 6 RAG Fallback Fix Changes
+
+- Added provider-specific timeout config:
+  - `gemini_request_timeout_ms`
+  - `ollama_request_timeout_ms`
+- Added environment variables:
+  - `LIGHTAGENT_GEMINI_REQUEST_TIMEOUT_MS`
+  - `LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS`
+  - `GEMINI_REQUEST_TIMEOUT_MS`
+  - `OLLAMA_REQUEST_TIMEOUT_MS`
+- `GeminiProvider` now uses `gemini_request_timeout_ms` when set, otherwise
+  falls back to `request_timeout_ms`.
+- `OllamaProvider` now uses `ollama_request_timeout_ms`, defaulting to 30000 ms.
+- `/api/health` now reports the effective Gemini and Ollama timeout values.
+- Ollama failures now include safe diagnostic fields: `base_url`, `model`,
+  `timeout_ms`, optional HTTP status, and HttpClient error text. API keys are
+  not included.
+
+## Stage 6 RAG Fallback Fix Verification Commands
+
+Run these in VMware Ubuntu after syncing the code:
+
+```bash
+cd ~/LightAgentGateway
+make clean
+make
+
+systemctl status ollama
+ollama list
+curl http://127.0.0.1:11434/api/tags
+
+sudo pkill WebServer
+
+sudo GEMINI_API_KEY="test_key_123" \
+LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+LIGHTAGENT_ENABLE_OLLAMA_FALLBACK="true" \
+OLLAMA_MODEL="qwen2.5:0.5b" \
+LIGHTAGENT_KB_DIR="./knowledge_base" \
+LIGHTAGENT_REQUEST_TIMEOUT_MS="5000" \
+LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS="30000" \
+./WebServer
+```
+
+In another terminal:
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"LightAgent Gateway 支持哪些 Provider？","top_k":3}'
+
+curl http://127.0.0.1/api/metrics
+```
+
+Expected RAG fields:
+
+- `success=true`
+- `provider="ollama"`
+- `model="qwen2.5:0.5b"`
+- `fallback_from="gemini"`
+- `fallback_to="ollama"`
+- `retrieved_chunks` is not empty
+- `answer` is not empty
+
+Expected metrics fields:
+
+- `fallback_count` increases
+- `last_fallback_from="gemini"`
+- `last_fallback_to="ollama"`
+- `last_rag_provider="ollama"`
+- `last_rag_success=true`
+
+## Stage 6 RAG Fallback Fix Suggested Commit Message
+
+```text
+fix: repair rag ollama fallback after gemini failure
+```
