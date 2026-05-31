@@ -168,6 +168,12 @@ void applyValue(GatewayConfig &config, const std::string &key,
     if (auto parsed = parseInt(value)) config.gemini_request_timeout_ms = *parsed;
   } else if (key == "ollama_request_timeout_ms") {
     if (auto parsed = parseInt(value)) config.ollama_request_timeout_ms = *parsed;
+  } else if (key == "stream_enabled") {
+    if (auto parsed = parseBool(value)) config.stream_enabled = *parsed;
+  } else if (key == "stream_mode") {
+    config.stream_mode = value;
+  } else if (key == "stream_chunk_size") {
+    if (auto parsed = parseInt(value)) config.stream_chunk_size = *parsed;
   } else if (key == "enable_real_gemini") {
     if (auto parsed = parseBool(value)) config.enable_real_gemini = *parsed;
   } else if (key == "enable_real_ollama") {
@@ -199,6 +205,9 @@ void applyEnv(GatewayConfig &config) {
       {"request_timeout_ms", "LIGHTAGENT_REQUEST_TIMEOUT_MS"},
       {"gemini_request_timeout_ms", "LIGHTAGENT_GEMINI_REQUEST_TIMEOUT_MS"},
       {"ollama_request_timeout_ms", "LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS"},
+      {"stream_enabled", "LIGHTAGENT_STREAM_ENABLED"},
+      {"stream_mode", "LIGHTAGENT_STREAM_MODE"},
+      {"stream_chunk_size", "LIGHTAGENT_STREAM_CHUNK_SIZE"},
       {"enable_real_gemini", "LIGHTAGENT_ENABLE_REAL_GEMINI"},
       {"enable_real_ollama", "LIGHTAGENT_ENABLE_REAL_OLLAMA"},
       {"enable_ollama_fallback", "LIGHTAGENT_ENABLE_OLLAMA_FALLBACK"},

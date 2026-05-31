@@ -781,3 +781,205 @@ Expected metrics fields:
 ```text
 fix: repair rag ollama fallback after gemini failure
 ```
+
+## Stage 7 Goal
+
+Add pseudo streaming APIs without changing the Reactor/Epoll/EventLoop/Server
+architecture:
+
+- `POST /api/chat/stream`
+- `POST /api/rag/query/stream`
+
+The current stage generates the complete answer first, then formats it as
+SSE-like `data: {...}\n\n` chunks. It is not real token streaming from
+Gemini/Ollama yet.
+
+## Stage 7 Modified Files
+
+- `CMakeLists.txt`
+- `GatewayConfig.h`
+- `GatewayConfig.cpp`
+- `LightAgentGateway.h`
+- `LightAgentGateway.cpp`
+- `MockProvider.cpp`
+- `StreamUtil.h`
+- `StreamUtil.cpp`
+- `config.example.json`
+- `scripts/start_gateway_stream_ollama.sh.example`
+- `docs/development_log.md`
+- `docs/debug_log.md`
+
+## Stage 7 New Classes / Structs / Functions
+
+- `StreamBuildResult`
+- `splitTextForStream(const std::string&, size_t)`
+- `buildSseDataEvent(const std::string&)`
+- `buildStreamFromAnswer(...)`
+- `buildStreamError(...)`
+- `LightAgentGateway::chatStream(...)`
+- `LightAgentGateway::ragQueryStream(...)`
+- Internal helpers:
+  - `executeChatInternal(...)`
+  - `executeRagInternal(...)`
+  - `setLastStreamStatus(...)`
+  - `streamChunkSize(...)`
+
+## Stage 7 API Changes
+
+- Added `POST /api/chat/stream`.
+- Added `POST /api/rag/query/stream`.
+- Existing APIs remain available:
+  - `GET /hello`
+  - `GET /favicon.ico`
+  - `GET /api/health`
+  - `GET /api/metrics`
+  - `POST /api/chat`
+  - `POST /api/rag/query`
+
+## Stage 7 Stream Response Format
+
+Responses use `Content-Type: text/event-stream; charset=utf-8`.
+
+Each event is formatted as:
+
+```text
+data: {"id":"...","object":"...","delta":"...","provider":"...","model":"..."}
+
+```
+
+The final event is always:
+
+```text
+data: {"id":"...","object":"...","done":true}
+
+```
+
+Provider failures return an SSE error event followed by `done=true`.
+
+## Stage 7 Chat Stream Flow
+
+1. `POST /api/chat/stream` parses `message`.
+2. It reuses `executeChatInternal(...)`, the same provider path used by
+   `/api/chat`.
+3. Provider selection still goes through `ProviderFactory`.
+4. Gemini failure can still fallback to Ollama when enabled.
+5. The complete `ChatResult.answer` is split by `StreamUtil`.
+6. The response body is returned as SSE-style data chunks.
+
+## Stage 7 RAG Stream Flow
+
+1. `POST /api/rag/query/stream` parses `question`, falling back to `message`.
+2. It reuses `executeRagInternal(...)`, the same RAG path used by
+   `/api/rag/query`.
+3. `KnowledgeBase` retrieves chunks.
+4. `RagEngine` builds the RAG prompt and calls the selected provider.
+5. Gemini failure can still fallback to Ollama when enabled.
+6. The first SSE event includes metadata such as `question`, `top_k`, and
+   `retrieved_chunks_count`.
+7. The complete RAG answer is split into pseudo stream chunks.
+
+## Stage 7 Metrics Changes
+
+`GET /api/metrics` now includes:
+
+- `stream_requests_total`
+- `chat_stream_requests_total`
+- `rag_stream_requests_total`
+- `last_stream_latency_ms`
+- `last_stream_success`
+- `last_stream_error`
+- `last_stream_provider`
+- `last_stream_chunks`
+- `last_stream_type`
+
+## Stage 7 Config Changes
+
+`GatewayConfig` now supports:
+
+- `stream_enabled`, default `true`
+- `stream_mode`, default `pseudo`
+- `stream_chunk_size`, default `40`
+
+Environment variables:
+
+- `LIGHTAGENT_STREAM_ENABLED`
+- `LIGHTAGENT_STREAM_MODE`
+- `LIGHTAGENT_STREAM_CHUNK_SIZE`
+
+`/api/health` now reports `version=0.7.0`, `stage=phase-7`,
+`stream_enabled`, `stream_mode`, and `stream_chunk_size`.
+
+## Stage 7 Build Commands
+
+```bash
+make clean
+make
+```
+
+Or:
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+## Stage 7 Runtime Commands
+
+```bash
+systemctl status ollama
+ollama list
+curl http://127.0.0.1:11434/api/tags
+
+sudo pkill WebServer
+
+sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" \
+OLLAMA_MODEL="qwen2.5:0.5b" \
+LIGHTAGENT_KB_DIR="./knowledge_base" \
+LIGHTAGENT_STREAM_CHUNK_SIZE="40" \
+./WebServer
+```
+
+## Stage 7 Curl Test Commands
+
+```bash
+curl http://127.0.0.1/api/health
+
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"用一句话介绍一下什么是 RAG"}'
+
+curl -N -X POST http://127.0.0.1/api/rag/query/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？","top_k":3}'
+
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+curl http://127.0.0.1/api/metrics
+```
+
+## Stage 7 Verification Checklist
+
+- `/api/health` returns `phase-7`, `stream_enabled=true`, and
+  `stream_mode="pseudo"`.
+- `/api/chat/stream` returns multiple `data: {...}` lines and ends with
+  `done=true`.
+- `/api/rag/query/stream` returns metadata, answer chunks, and `done=true`.
+- Missing `message` or `question` returns an SSE error event.
+- `/api/metrics` updates stream counters and last stream fields.
+
+## Stage 7 Known Limitations
+
+- This is pseudo streaming, not real token streaming.
+- The server still sends one complete HTTP response body.
+- No WebSocket support is implemented.
+- No real chunked transfer flushing is implemented.
+- UTF-8 splitting is boundary-aware for common UTF-8 sequences, but it is not a
+  full Unicode grapheme cluster segmenter.
+
+## Stage 7 Suggested Commit Message
+
+```text
+feat: add pseudo streaming chat and rag APIs
+```

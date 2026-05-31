@@ -15,6 +15,7 @@
 #include "JsonUtil.h"
 #include "ProviderFactory.h"
 #include "RagEngine.h"
+#include "StreamUtil.h"
 
 namespace {
 
@@ -25,11 +26,15 @@ struct GatewayMetrics {
   std::atomic<unsigned long long> total_requests{0};
   std::atomic<unsigned long long> chat_requests{0};
   std::atomic<unsigned long long> rag_requests{0};
+  std::atomic<unsigned long long> chat_stream_requests{0};
+  std::atomic<unsigned long long> rag_stream_requests{0};
   std::atomic<unsigned long long> health_requests{0};
   std::atomic<unsigned long long> metrics_requests{0};
   std::atomic<unsigned long long> fallback_count{0};
   std::atomic<long long> last_chat_latency_ms{0};
   std::atomic<bool> last_chat_success{false};
+  std::atomic<long long> last_stream_latency_ms{0};
+  std::atomic<bool> last_stream_success{false};
   std::mutex last_provider_mutex;
   std::string last_provider = "none";
   std::string last_chat_error;
@@ -38,6 +43,10 @@ struct GatewayMetrics {
   std::string last_rag_error;
   int last_rag_chunks = 0;
   std::string last_rag_provider;
+  std::string last_stream_error;
+  std::string last_stream_provider;
+  int last_stream_chunks = 0;
+  std::string last_stream_type;
   std::string last_fallback_from;
   std::string last_fallback_to;
 };
@@ -68,6 +77,12 @@ std::string lowerCopy(std::string value) {
 LightAgentGateway::Response jsonResponse(int statusCode, std::string reason,
                                          std::string body) {
   return {statusCode, std::move(reason), "application/json; charset=utf-8",
+          std::move(body)};
+}
+
+LightAgentGateway::Response streamResponse(int statusCode, std::string reason,
+                                           std::string body) {
+  return {statusCode, std::move(reason), "text/event-stream; charset=utf-8",
           std::move(body)};
 }
 
@@ -156,6 +171,43 @@ std::string getLastRagProvider() {
   return metrics.last_rag_provider;
 }
 
+void setLastStreamStatus(std::string type, const std::string &provider,
+                         bool success, std::string error, int chunks,
+                         long long latencyMs) {
+  auto &metrics = metricsState();
+  metrics.last_stream_latency_ms = latencyMs;
+  metrics.last_stream_success = success;
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  metrics.last_stream_type = std::move(type);
+  metrics.last_stream_provider = provider;
+  metrics.last_stream_error = std::move(error);
+  metrics.last_stream_chunks = chunks;
+}
+
+std::string getLastStreamError() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_stream_error;
+}
+
+std::string getLastStreamProvider() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_stream_provider;
+}
+
+int getLastStreamChunks() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_stream_chunks;
+}
+
+std::string getLastStreamType() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_stream_type;
+}
+
 bool shouldFallbackToOllama(const GatewayConfig &config,
                             const ChatResult &result) {
   return !result.success && config.enable_ollama_fallback &&
@@ -188,6 +240,10 @@ ChatResult applyOllamaFallbackIfNeeded(const GatewayConfig &config,
 }
 
 int clampTopK(int value) { return std::max(1, std::min(10, value)); }
+
+size_t streamChunkSize(const GatewayConfig &config) {
+  return static_cast<size_t>(std::max(1, config.stream_chunk_size));
+}
 
 std::string chunkPreview(std::string content) {
   constexpr size_t kMaxChunkChars = 500;
@@ -237,6 +293,97 @@ std::string buildRagJson(const RagResult &result) {
   return body.str();
 }
 
+struct ChatExecution {
+  ChatRequest request;
+  ChatResult result;
+  long long latency_ms = 0;
+  bool bad_request = false;
+};
+
+struct RagExecution {
+  RagResult result;
+  bool bad_request = false;
+};
+
+ChatExecution executeChatInternal(std::string_view requestBody) {
+  const auto started = Clock::now();
+  ChatExecution execution;
+
+  auto message = extractJsonStringField(requestBody, "message");
+  execution.request =
+      makeChatRequest(message.value_or(""),
+                      extractJsonStringField(requestBody, "session_id"),
+                      extractJsonStringField(requestBody, "system_prompt"));
+
+  if (!message || message->empty()) {
+    execution.bad_request = true;
+    execution.result.answer.clear();
+    execution.result.provider = gatewayConfig().default_provider;
+    execution.result.model = "";
+    execution.result.success = false;
+    execution.result.error_message = "message field is required";
+  } else {
+    const GatewayConfig &config = gatewayConfig();
+    std::unique_ptr<ILlmProvider> provider = ProviderFactory::create(config);
+    execution.result = applyOllamaFallbackIfNeeded(
+        config, execution.request, provider->chat(execution.request));
+  }
+
+  execution.latency_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                            started)
+          .count();
+  return execution;
+}
+
+RagExecution executeRagInternal(std::string_view requestBody) {
+  RagExecution execution;
+  auto question = extractJsonStringField(requestBody, "question");
+  if (!question || question->empty()) {
+    question = extractJsonStringField(requestBody, "message");
+  }
+
+  if (!question || question->empty()) {
+    execution.bad_request = true;
+    execution.result.question = "";
+    execution.result.error_message = "question field is required";
+    execution.result.latency_ms = 0;
+    return execution;
+  }
+
+  const GatewayConfig &config = gatewayConfig();
+  const int topK =
+      clampTopK(extractJsonIntField(requestBody, "top_k").value_or(
+          config.rag_top_k));
+
+  RagEngine engine(config);
+  execution.result = engine.query(*question, topK);
+  if (execution.result.fallback_from) ++metricsState().fallback_count;
+  return execution;
+}
+
+int chatStatusCode(const ChatExecution &execution) {
+  if (execution.result.success) return 200;
+  return execution.bad_request ? 400 : 503;
+}
+
+std::string chatReason(const ChatExecution &execution) {
+  const int status = chatStatusCode(execution);
+  if (status == 200) return "OK";
+  return status == 400 ? "Bad Request" : "Service Unavailable";
+}
+
+int ragStatusCode(const RagExecution &execution) {
+  if (execution.result.success) return 200;
+  return execution.bad_request ? 400 : 503;
+}
+
+std::string ragReason(const RagExecution &execution) {
+  const int status = ragStatusCode(execution);
+  if (status == 200) return "OK";
+  return status == 400 ? "Bad Request" : "Service Unavailable";
+}
+
 }  // namespace
 
 std::optional<LightAgentGateway::Response> LightAgentGateway::handle(
@@ -264,12 +411,28 @@ std::optional<LightAgentGateway::Response> LightAgentGateway::handle(
     return metrics();
   }
 
+  if (request.path == "/api/chat/stream") {
+    ++state.chat_stream_requests;
+    if (request.method != Method::Post) {
+      return methodNotAllowed("POST");
+    }
+    return chatStream(request);
+  }
+
   if (request.path == "/api/chat") {
     ++state.chat_requests;
     if (request.method != Method::Post) {
       return methodNotAllowed("POST");
     }
     return chat(request);
+  }
+
+  if (request.path == "/api/rag/query/stream") {
+    ++state.rag_stream_requests;
+    if (request.method != Method::Post) {
+      return methodNotAllowed("POST");
+    }
+    return ragQueryStream(request);
   }
 
   if (request.path == "/api/rag/query") {
@@ -314,6 +477,10 @@ LightAgentGateway::Response LightAgentGateway::health() {
        << "\"rag_enable_llm_answer\":"
        << (config.rag_enable_llm_answer ? "true" : "false") << ","
        << "\"rag_max_context_chars\":" << config.rag_max_context_chars << ","
+       << "\"stream_enabled\":"
+       << (config.stream_enabled ? "true" : "false") << ","
+       << "\"stream_mode\":\"" << escapeJsonString(config.stream_mode) << "\","
+       << "\"stream_chunk_size\":" << config.stream_chunk_size << ","
        << "\"static_root\":\""
        << escapeJsonString(config.static_root.generic_string()) << "\","
        << "\"request_timeout_ms\":" << config.request_timeout_ms << ","
@@ -350,6 +517,10 @@ LightAgentGateway::Response LightAgentGateway::metrics() {
       {"chat_requests", metrics.chat_requests.load()},
       {"chat_requests_total", metrics.chat_requests.load()},
       {"rag_requests_total", metrics.rag_requests.load()},
+      {"stream_requests_total", metrics.chat_stream_requests.load() +
+                                      metrics.rag_stream_requests.load()},
+      {"chat_stream_requests_total", metrics.chat_stream_requests.load()},
+      {"rag_stream_requests_total", metrics.rag_stream_requests.load()},
       {"health_requests", metrics.health_requests.load()},
       {"metrics_requests", metrics.metrics_requests.load()},
       {"fallback_count", metrics.fallback_count.load()},
@@ -379,6 +550,17 @@ LightAgentGateway::Response LightAgentGateway::metrics() {
   body << ",\"last_rag_chunks\":" << getLastRagChunks();
   body << ",\"last_rag_provider\":\""
        << escapeJsonString(getLastRagProvider()) << "\"";
+  body << ",\"last_stream_latency_ms\":"
+       << metrics.last_stream_latency_ms.load();
+  body << ",\"last_stream_success\":"
+       << (metrics.last_stream_success.load() ? "true" : "false");
+  body << ",\"last_stream_error\":\""
+       << escapeJsonString(getLastStreamError()) << "\"";
+  body << ",\"last_stream_provider\":\""
+       << escapeJsonString(getLastStreamProvider()) << "\"";
+  body << ",\"last_stream_chunks\":" << getLastStreamChunks();
+  body << ",\"last_stream_type\":\"" << escapeJsonString(getLastStreamType())
+       << "\"";
   body << ",\"last_fallback_from\":\""
        << escapeJsonString(getLastFallbackFrom()) << "\"";
   body << ",\"last_fallback_to\":\""
@@ -389,78 +571,119 @@ LightAgentGateway::Response LightAgentGateway::metrics() {
 
 LightAgentGateway::Response LightAgentGateway::chat(const Request &request) {
   auto &metrics = metricsState();
+  ChatExecution execution = executeChatInternal(request.body);
+
+  metrics.last_chat_latency_ms = execution.latency_ms;
+  metrics.last_chat_success = execution.result.success;
+  setLastChatStatus(execution.result.provider,
+                    execution.result.error_message.value_or(""),
+                    execution.result.fallback_from.value_or(""),
+                    execution.result.fallback_to.value_or(""));
+
+  return jsonResponse(chatStatusCode(execution), chatReason(execution),
+                      buildChatJson("lightagent-chat-1", execution.request,
+                                    execution.result));
+}
+
+LightAgentGateway::Response LightAgentGateway::chatStream(
+    const Request &request) {
+  const GatewayConfig &config = gatewayConfig();
   const auto started = Clock::now();
 
-  auto message = extractJsonStringField(request.body, "message");
-  ChatRequest chatRequest =
-      makeChatRequest(message.value_or(""),
-                      extractJsonStringField(request.body, "session_id"),
-                      extractJsonStringField(request.body, "system_prompt"));
+  if (!config.stream_enabled) {
+    StreamBuildResult error = buildStreamError(
+        "lightagent-chat-stream-1", "chat.completion.chunk",
+        "stream API is disabled by config");
+    setLastStreamStatus("chat", config.default_provider, false,
+                        "stream API is disabled by config",
+                        static_cast<int>(error.chunks), 0);
+    return streamResponse(503, "Service Unavailable", error.body);
+  }
 
-  ChatResult result;
-  if (!message || message->empty()) {
-    result.answer.clear();
-    result.provider = gatewayConfig().default_provider;
-    result.model = "";
-    result.success = false;
-    result.error_message = "message field is required";
+  ChatExecution execution = executeChatInternal(request.body);
+  StreamBuildResult stream;
+  if (execution.result.success) {
+    stream = buildStreamFromAnswer(
+        "lightagent-chat-stream-1", "chat.completion.chunk",
+        execution.result.provider, execution.result.model,
+        execution.result.answer, streamChunkSize(config),
+        execution.result.fallback_from, execution.result.fallback_to);
   } else {
-    const GatewayConfig &config = gatewayConfig();
-    std::unique_ptr<ILlmProvider> provider = ProviderFactory::create(config);
-    result = applyOllamaFallbackIfNeeded(config, chatRequest,
-                                         provider->chat(chatRequest));
+    stream = buildStreamError(
+        "lightagent-chat-stream-1", "chat.completion.chunk",
+        execution.result.error_message.value_or("chat stream failed"));
   }
 
   const auto latencyMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
                                                             started)
           .count();
-  metrics.last_chat_latency_ms = latencyMs;
-  metrics.last_chat_success = result.success;
-  setLastChatStatus(result.provider, result.error_message.value_or(""),
-                    result.fallback_from.value_or(""),
-                    result.fallback_to.value_or(""));
+  setLastStreamStatus("chat", execution.result.provider,
+                      execution.result.success,
+                      execution.result.error_message.value_or(""),
+                      static_cast<int>(stream.chunks), latencyMs);
 
-  const int statusCode =
-      result.success
-          ? 200
-          : (result.error_message == "message field is required" ? 400 : 503);
-  return jsonResponse(statusCode,
-                      result.success
-                          ? "OK"
-                          : (statusCode == 400 ? "Bad Request"
-                                               : "Service Unavailable"),
-                      buildChatJson("lightagent-chat-1", chatRequest, result));
+  return streamResponse(chatStatusCode(execution), chatReason(execution),
+                        stream.body);
 }
 
 LightAgentGateway::Response LightAgentGateway::ragQuery(
     const Request &request) {
-  auto question = extractJsonStringField(request.body, "question");
-  if (!question || question->empty()) {
-    question = extractJsonStringField(request.body, "message");
-  }
+  RagExecution execution = executeRagInternal(request.body);
+  setLastRagStatus(execution.result);
 
-  if (!question || question->empty()) {
-    RagResult result;
-    result.question = "";
-    result.error_message = "question field is required";
-    result.latency_ms = 0;
-    setLastRagStatus(result);
-    return jsonResponse(400, "Bad Request", buildRagJson(result));
-  }
+  return jsonResponse(ragStatusCode(execution), ragReason(execution),
+                      buildRagJson(execution.result));
+}
 
+LightAgentGateway::Response LightAgentGateway::ragQueryStream(
+    const Request &request) {
   const GatewayConfig &config = gatewayConfig();
-  const int topK =
-      clampTopK(extractJsonIntField(request.body, "top_k").value_or(
-          config.rag_top_k));
+  const auto started = Clock::now();
 
-  RagEngine engine(config);
-  RagResult result = engine.query(*question, topK);
-  if (result.fallback_from) ++metricsState().fallback_count;
-  setLastRagStatus(result);
+  if (!config.stream_enabled) {
+    StreamBuildResult error = buildStreamError(
+        "lightagent-rag-stream-1", "rag.query.chunk",
+        "stream API is disabled by config");
+    setLastStreamStatus("rag", config.default_provider, false,
+                        "stream API is disabled by config",
+                        static_cast<int>(error.chunks), 0);
+    return streamResponse(503, "Service Unavailable", error.body);
+  }
 
-  const int statusCode = result.success ? 200 : 503;
-  return jsonResponse(statusCode,
-                      result.success ? "OK" : "Service Unavailable",
-                      buildRagJson(result));
+  RagExecution execution = executeRagInternal(request.body);
+  setLastRagStatus(execution.result);
+
+  std::ostringstream metadata;
+  metadata << "\"question\":\"" << escapeJsonString(execution.result.question)
+           << "\","
+           << "\"top_k\":" << execution.result.top_k << ","
+           << "\"retrieved_chunks_count\":"
+           << execution.result.retrieved_chunks.size();
+
+  StreamBuildResult stream;
+  if (execution.result.success) {
+    stream = buildStreamFromAnswer(
+        "lightagent-rag-stream-1", "rag.query.chunk",
+        execution.result.provider, execution.result.model,
+        execution.result.answer, streamChunkSize(config),
+        execution.result.fallback_from, execution.result.fallback_to,
+        metadata.str());
+  } else {
+    stream = buildStreamError(
+        "lightagent-rag-stream-1", "rag.query.chunk",
+        execution.result.error_message.empty() ? "rag stream failed"
+                                               : execution.result.error_message);
+  }
+
+  const auto latencyMs =
+      std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                            started)
+          .count();
+  setLastStreamStatus("rag", execution.result.provider,
+                      execution.result.success, execution.result.error_message,
+                      static_cast<int>(stream.chunks), latencyMs);
+
+  return streamResponse(ragStatusCode(execution), ragReason(execution),
+                        stream.body);
 }

@@ -27,5 +27,7 @@ class LightAgentGateway {
   static Response health();
   static Response metrics();
   static Response chat(const Request &request);
+  static Response chatStream(const Request &request);
   static Response ragQuery(const Request &request);
+  static Response ragQueryStream(const Request &request);
 };

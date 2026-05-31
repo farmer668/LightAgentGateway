@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euo pipefail
+
+# Example: start LightAgent Gateway with pseudo streaming enabled.
+# Make sure Ollama is installed and running:
+#   systemctl status ollama
+# Make sure qwen2.5:0.5b exists:
+#   ollama list
+#
+# The current project often listens on port 80, which requires sudo.
+
+export LIGHTAGENT_DEFAULT_PROVIDER="ollama"
+export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+export OLLAMA_MODEL="qwen2.5:0.5b"
+export LIGHTAGENT_KB_DIR="./knowledge_base"
+export LIGHTAGENT_STREAM_ENABLED="true"
+export LIGHTAGENT_STREAM_CHUNK_SIZE="40"
+export LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS="30000"
+
+sudo LIGHTAGENT_DEFAULT_PROVIDER="${LIGHTAGENT_DEFAULT_PROVIDER}" \
+  OLLAMA_BASE_URL="${OLLAMA_BASE_URL}" \
+  OLLAMA_MODEL="${OLLAMA_MODEL}" \
+  LIGHTAGENT_KB_DIR="${LIGHTAGENT_KB_DIR}" \
+  LIGHTAGENT_STREAM_ENABLED="${LIGHTAGENT_STREAM_ENABLED}" \
+  LIGHTAGENT_STREAM_CHUNK_SIZE="${LIGHTAGENT_STREAM_CHUNK_SIZE}" \
+  LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS="${LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS}" \
+  ./WebServer

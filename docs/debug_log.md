@@ -985,3 +985,160 @@ curl http://127.0.0.1/api/metrics
 - `/api/rag/query` 返回 `fallback_from="gemini"` 和 `fallback_to="ollama"`。
 - `/api/rag/query` 返回非空 `retrieved_chunks` 和非空 `answer`。
 - `/api/metrics` 中 `last_rag_success=true`，`last_rag_provider="ollama"`。
+
+## Stage 7 Debug Notes
+
+### Issue 1: Pseudo Stream vs Real Stream
+
+#### 问题现象
+
+Stage 7 需要新增 `/api/chat/stream` 和 `/api/rag/query/stream`，但当前
+Reactor WebServer 的响应封装仍以一次性 `Content-Length` body 返回为主。
+
+#### 原因分析
+
+真实 token stream 需要 Provider 层支持 Ollama/Gemini 的 streaming API，并且
+HTTP 层需要更细粒度 flush 或 chunked transfer 处理。当前阶段目标只是提供
+SSE-like 接口形态，不重构底层网络架构。
+
+#### 修复方式
+
+先实现 pseudo streaming：复用 `/api/chat` 和 `/api/rag/query` 的完整生成逻辑，
+拿到完整 answer 后再拆成多个 `data: {...}\n\n` 事件返回。
+
+#### 验证命令
+
+```bash
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"用一句话介绍一下什么是 RAG"}'
+```
+
+#### 验证结果预期
+
+返回多行 `data: {...}`，最后一行包含 `"done":true`。当前不是 Ollama/Gemini
+token-by-token 真实流。
+
+### Issue 2: Stream Content-Type and Header Limitations
+
+#### 问题现象
+
+SSE 通常需要 `Content-Type: text/event-stream`、`Cache-Control: no-cache` 和
+持续连接；当前 `HttpData` 响应结构只直接支持 status、content-type 和 body。
+
+#### 原因分析
+
+为了避免重构 `HttpData` / Reactor 底层，本阶段只通过
+`LightAgentGateway::Response.contentType` 设置
+`text/event-stream; charset=utf-8`，仍由现有 HTTP 响应路径加
+`Content-Length`。
+
+#### 修复方式
+
+保持现有响应封装，只保证：
+
+- Content-Type 为 `text/event-stream; charset=utf-8`
+- body 为 SSE-like `data: {...}\n\n`
+- `curl -N` 可以看到 data 行
+
+#### 验证命令
+
+```bash
+curl -i -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello stream"}'
+```
+
+#### 验证结果预期
+
+响应 header 中出现 `Content-Type: text/event-stream; charset=utf-8`，body 中
+出现 `data:` 行。
+
+### Issue 3: UTF-8 Chunk Split
+
+#### 问题现象
+
+如果直接按字节切分中文 answer，可能把一个 UTF-8 中文字符切坏。
+
+#### 原因分析
+
+中文字符通常占多个字节，简单 `substr` 按固定字节切分会产生无效 UTF-8。
+
+#### 修复方式
+
+`splitTextForStream()` 按 UTF-8 leading byte 判断当前 code point 长度，只在
+code point 边界切分。遇到异常字节时退化为单字节前进，保证不会死循环。
+
+#### 验证命令
+
+```bash
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"请用中文介绍 RAG"}'
+```
+
+#### 验证结果预期
+
+返回的 `delta` 不应出现明显乱码；最后仍包含 `"done":true`。
+
+### Issue 4: Provider Failure in Stream
+
+#### 问题现象
+
+stream API 中 provider 可能失败，例如 Ollama 未启动、Gemini timeout、fallback
+也失败。
+
+#### 原因分析
+
+stream API 复用 provider 调用链，provider 失败时不能崩溃，也不能返回半截无结构
+文本。
+
+#### 修复方式
+
+新增 `buildStreamError()`，失败时返回 SSE error event，并追加 `done=true`。
+
+#### 验证命令
+
+```bash
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+#### 验证结果预期
+
+返回：
+
+```text
+data: {"id":"lightagent-chat-stream-1","object":"chat.completion.chunk","success":false,"error_message":"message field is required"}
+
+data: {"id":"lightagent-chat-stream-1","object":"chat.completion.chunk","done":true}
+```
+
+### Issue 5: RAG Stream No Chunks
+
+#### 问题现象
+
+`/api/rag/query/stream` 如果知识库没有命中，可能没有 answer 可拆分。
+
+#### 原因分析
+
+RAG 依赖 `KnowledgeBase::search()` 的本地关键词检索。没有 chunks 时，
+`RagEngine` 返回 `success=false` 和 `no relevant chunks found`。
+
+#### 修复方式
+
+RAG stream 复用 `executeRagInternal()`，失败时返回 SSE error event，并追加
+`done=true`，不崩溃。
+
+#### 验证命令
+
+```bash
+curl -N -X POST http://127.0.0.1/api/rag/query/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question":"一个知识库里完全不存在的问题","top_k":3}'
+```
+
+#### 验证结果预期
+
+返回 SSE error event，包含 `error_message`，并以 `done=true` 结束。

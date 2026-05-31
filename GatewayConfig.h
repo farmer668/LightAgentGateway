@@ -6,8 +6,8 @@
 
 struct GatewayConfig {
   std::string service_name = "LightAgent Gateway";
-  std::string version = "0.6.0";
-  std::string stage = "phase-6";
+  std::string version = "0.7.0";
+  std::string stage = "phase-7";
   std::string default_provider = "mock";
   std::string fallback_provider = "ollama";
   std::optional<std::string> gemini_api_key;
@@ -26,6 +26,9 @@ struct GatewayConfig {
   int request_timeout_ms = 30000;
   int gemini_request_timeout_ms = 0;
   int ollama_request_timeout_ms = 30000;
+  bool stream_enabled = true;
+  std::string stream_mode = "pseudo";
+  int stream_chunk_size = 40;
   bool enable_real_gemini = true;
   bool enable_real_ollama = true;
   bool enable_ollama_fallback = true;

@@ -27,6 +27,7 @@ set(SRCS
     ProviderFactory.cpp
     RagEngine.cpp
     Server.cpp
+    StreamUtil.cpp
     #ThreadPool.cpp
     Timer.cpp
     Util.cpp
