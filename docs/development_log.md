@@ -607,3 +607,74 @@ curl http://127.0.0.1/api/metrics
 ```text
 Add Stage 6 local file RAG query skeleton
 ```
+
+## Stage 6 Search Fix Goal
+
+Improve the local file RAG keyword search so Chinese natural language questions
+that contain English technical terms can still retrieve relevant chunks. Example
+queries:
+
+- `什么是 RAG？`
+- `LightAgent Gateway 支持哪些 Provider？`
+- `Ollama 是用来做什么的？`
+
+## Stage 6 Search Fix Modified Files
+
+- `KnowledgeBase.h`
+- `KnowledgeBase.cpp`
+- `MockProvider.cpp`
+- `docs/development_log.md`
+- `docs/debug_log.md`
+
+## Stage 6 Search Fix New Functions
+
+- `normalizeForSearch(const std::string& input)`
+  - Lowercases ASCII letters.
+  - Removes common English and Chinese punctuation.
+  - Collapses repeated whitespace.
+  - Keeps English letters, numbers, and UTF-8 Chinese text.
+- `extractSearchTerms(const std::string& query)`
+  - Splits the normalized query by spaces.
+  - Extracts continuous ASCII letter/digit runs from the raw query.
+  - Keeps important technical terms such as `rag`, `lightagent`, `gateway`,
+    `provider`, `gemini`, and `ollama`.
+  - Removes meaningless one-letter terms and deduplicates terms.
+
+## Stage 6 Search Fix Scoring Changes
+
+- Normalize query, chunk content, file path, and title before matching.
+- Add a high score when normalized chunk content contains the full normalized
+  query.
+- Add content match score for each extracted search term.
+- Add title/path match score for each extracted search term.
+- Give important technical terms higher scores.
+- Keep only chunks with `score > 0`.
+- Use stable score-descending sort, then file path and chunk offset for ties.
+
+## Stage 6 Search Fix Verification Commands
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？","top_k":3}'
+
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"LightAgent Gateway 支持哪些 Provider？","top_k":3}'
+
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Ollama 是用来做什么的？","top_k":3}'
+```
+
+## Stage 6 Search Fix Known Limitations
+
+- This is still keyword search, not semantic search.
+- There is still no embedding model, vector database, or reranker.
+- Chinese text is not segmented by a dictionary-based tokenizer.
+
+## Stage 6 Search Fix Suggested Commit Message
+
+```text
+fix: improve rag keyword search for Chinese queries
+```

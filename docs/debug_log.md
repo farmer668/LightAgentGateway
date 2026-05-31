@@ -804,3 +804,64 @@ curl -X POST http://127.0.0.1/api/rag/query \
 #### 验证结果
 
 拆分后的文档可以被召回，响应中出现对应文件路径和 chunk preview。
+
+### Issue 6: Chinese Query With English Technical Term Misses RAG Chunks
+
+#### 问题现象
+
+Stage 6 初版 `/api/rag/query` 对英文关键词查询有效，例如
+`RAG Retrieval Augmented Generation` 可以命中知识库；但中文问题
+`什么是 RAG？` 返回空召回结果。
+
+#### 触发命令
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？","top_k":3}'
+```
+
+#### 报错信息或异常返回
+
+```json
+{
+  "success": false,
+  "retrieved_chunks": [],
+  "error_message": "no relevant chunks found"
+}
+```
+
+#### 原因分析
+
+初版检索逻辑主要依赖简单字符串匹配和空格切词。中文问题通常没有稳定空格；
+`RAG？` 还带中文问号，导致 query term 无法直接匹配知识库中的 `RAG`。
+
+#### 修复方式
+
+- 增加 `normalizeForSearch()`，统一小写英文并移除中英文标点。
+- 增加 `extractSearchTerms()`，从中文句子中额外提取连续英文/数字关键词。
+- 对 chunk content、file_path、title 统一 normalize。
+- 对 `rag`、`lightagent`、`gateway`、`provider`、`gemini`、`ollama`
+  等技术词提高命中分数。
+- 只返回 `score > 0` 的 chunk，并按 score 降序排序。
+
+#### 验证命令
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？","top_k":3}'
+
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"LightAgent Gateway 支持哪些 Provider？","top_k":3}'
+```
+
+#### 验证结果
+
+- `什么是 RAG？` 可以命中 `rag_intro.md`。
+- `LightAgent Gateway 支持哪些 Provider？` 可以命中
+  `lightagent_gateway.md`。
+- `/api/rag/query` 返回 `success=true`、`retrieved_chunks` 非空，并继续调用
+  configured provider 生成 answer；当 provider 为 Ollama 且服务正常时，会返回
+  Ollama 生成的 answer。

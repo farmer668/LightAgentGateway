@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 
+std::string normalizeForSearch(const std::string &input);
+std::vector<std::string> extractSearchTerms(const std::string &query);
+
 struct DocumentChunk {
   std::string file_path;
   std::string title;
