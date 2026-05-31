@@ -125,6 +125,26 @@ std::optional<std::string> extractOllamaText(std::string_view responseBody) {
   return extractJsonStringField(responseBody, "response");
 }
 
+std::optional<std::string> extractOllamaStreamDelta(std::string_view line) {
+  return extractJsonStringField(line, "response");
+}
+
+bool extractOllamaStreamDone(std::string_view line) {
+  const std::string quotedField = "\"done\"";
+  size_t pos = line.find(quotedField);
+  if (pos == std::string_view::npos) return false;
+
+  pos = line.find(':', pos + quotedField.size());
+  if (pos == std::string_view::npos) return false;
+  ++pos;
+  while (pos < line.size() &&
+         (line[pos] == ' ' || line[pos] == '\t' || line[pos] == '\r' ||
+          line[pos] == '\n')) {
+    ++pos;
+  }
+  return line.substr(pos, 4) == "true";
+}
+
 std::string buildErrorJson(std::string_view errorMessage) {
   std::ostringstream body;
   body << "{"

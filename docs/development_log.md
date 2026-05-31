@@ -983,3 +983,237 @@ curl http://127.0.0.1/api/metrics
 ```text
 feat: add pseudo streaming chat and rag APIs
 ```
+
+## Stage8 Goal
+
+Add upstream real Ollama streaming support while keeping the downstream
+WebServer response compatible with the current buffered response path.
+
+Stage8 changes:
+
+- Ollama upstream request uses `/api/generate` with `"stream": true`.
+- C++ reads Ollama JSON lines and extracts each `response` field as a delta.
+- Gateway converts those deltas into SSE-style `data: {...}\n\n` events.
+- Downstream client response is still a buffered SSE body because Reactor write
+  flushing is intentionally not refactored in this stage.
+
+## Stage8 Modified Files
+
+- `GatewayConfig.h`
+- `GatewayConfig.cpp`
+- `HttpClient.h`
+- `HttpClient.cpp`
+- `JsonUtil.h`
+- `JsonUtil.cpp`
+- `OllamaProvider.h`
+- `OllamaProvider.cpp`
+- `RagEngine.h`
+- `RagEngine.cpp`
+- `StreamUtil.h`
+- `StreamUtil.cpp`
+- `LightAgentGateway.cpp`
+- `config.example.json`
+- `scripts/start_gateway_real_stream_ollama.sh.example`
+- `docs/development_log.md`
+- `docs/debug_log.md`
+
+## Stage8 New Classes / Structs / Functions
+
+- `StreamHttpResponse`
+- `HttpClient::postJsonStream(...)`
+- `ChatStreamResult`
+- `OllamaProvider::streamChat(...)`
+- `extractOllamaStreamDelta(...)`
+- `extractOllamaStreamDone(...)`
+- `RagPreparedRequest`
+- `RagEngine::prepareRequest(...)`
+- `buildStreamFromDeltas(...)`
+- Internal gateway helpers:
+  - `executeChatStreamInternal(...)`
+  - `executeRagStreamInternal(...)`
+  - `providerForRagRequest(...)`
+  - `isOllamaStreamEnabled(...)`
+  - `joinDeltas(...)`
+
+## Stage8 HttpClient Stream Support
+
+`HttpClient::postJsonStream(...)` still uses libcurl. It sends JSON POST like
+`postJson(...)`, collects the response body through `CURLOPT_WRITEFUNCTION`,
+then splits the buffered response by newline into JSON lines.
+
+It handles:
+
+- curl initialization failure
+- `curl_easy_init` failure
+- timeout / connection failure
+- non-2xx HTTP status
+- empty response body
+- empty stream lines
+
+## Stage8 OllamaProvider Stream Flow
+
+`OllamaProvider::streamChat(...)`:
+
+1. Builds the same prompt format as non-stream chat.
+2. Sends `/api/generate` with `"stream": true`.
+3. Reads JSON lines from `HttpClient::postJsonStream(...)`.
+4. Extracts `response` from each line as a delta.
+5. Detects `done=true`.
+6. Returns `ChatStreamResult` with:
+   - `provider="ollama"`
+   - `model`
+   - `deltas`
+   - `upstream_real_stream=true`
+   - `upstream_stream_mode="ollama_stream_true"`
+
+If no deltas are found, it returns `success=false` with safe diagnostics.
+
+## Stage8 Chat Stream Flow
+
+- `default_provider=ollama` and `OLLAMA_STREAM=true`:
+  - use `OllamaProvider::streamChat(...)`
+  - return SSE events with `stream_mode="upstream_real"`
+- `default_provider=mock`:
+  - keep Stage7 pseudo stream
+- `default_provider=gemini`:
+  - Gemini still uses pseudo stream when successful
+  - if Gemini fails and fallback is enabled, fallback to Ollama uses
+    `streamChat(...)` when `OLLAMA_STREAM=true`
+
+## Stage8 RAG Stream Flow
+
+- `RagEngine::prepareRequest(...)` performs retrieval and prompt construction
+  without calling a provider.
+- Ollama RAG stream uses that prepared prompt and calls
+  `OllamaProvider::streamChat(...)`.
+- Gemini RAG stream first tries Gemini; when Gemini fails and fallback is
+  enabled, Ollama fallback uses real upstream stream.
+- First SSE event includes metadata:
+  - `question`
+  - `top_k`
+  - `retrieved_chunks_count`
+
+## Stage8 Metrics Changes
+
+`GET /api/metrics` now includes/updates:
+
+- `stream_requests_total`
+- `chat_stream_requests_total`
+- `rag_stream_requests_total`
+- `last_stream_success`
+- `last_stream_error`
+- `last_stream_provider`
+- `last_stream_chunks`
+- `last_stream_type`
+- `last_stream_mode`
+- `last_upstream_stream_mode`
+
+Expected values for Ollama real upstream stream:
+
+- `last_stream_mode="upstream_real"`
+- `last_upstream_stream_mode="ollama_stream_true"`
+- `last_stream_provider="ollama"`
+
+## Stage8 Config Changes
+
+Defaults:
+
+- `version="0.8.0"`
+- `stage="phase-8"`
+- `stream_mode="upstream_real_ollama"`
+- `ollama_stream=true`
+
+Environment variables:
+
+- `LIGHTAGENT_STREAM_ENABLED`
+- `LIGHTAGENT_STREAM_MODE`
+- `LIGHTAGENT_STREAM_CHUNK_SIZE`
+- `OLLAMA_STREAM`
+
+`OLLAMA_STREAM=false` keeps Stage7 pseudo streaming behavior.
+
+## Stage8 Build Commands
+
+```bash
+make clean
+make
+```
+
+Or:
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+## Stage8 Runtime Commands
+
+```bash
+systemctl status ollama
+ollama list
+curl http://127.0.0.1:11434/api/tags
+
+sudo pkill WebServer
+
+sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" \
+OLLAMA_MODEL="qwen2.5:0.5b" \
+OLLAMA_STREAM="true" \
+LIGHTAGENT_STREAM_MODE="upstream_real_ollama" \
+LIGHTAGENT_KB_DIR="./knowledge_base" \
+./WebServer
+```
+
+## Stage8 Curl Test Commands
+
+```bash
+curl http://127.0.0.1/api/health
+
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"用三句话介绍一下 RAG"}'
+
+curl -N -X POST http://127.0.0.1/api/rag/query/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？","top_k":3}'
+
+curl http://127.0.0.1/api/metrics
+```
+
+Pseudo fallback test:
+
+```bash
+sudo pkill WebServer
+
+sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" \
+OLLAMA_MODEL="qwen2.5:0.5b" \
+OLLAMA_STREAM="false" \
+LIGHTAGENT_STREAM_MODE="pseudo" \
+LIGHTAGENT_KB_DIR="./knowledge_base" \
+./WebServer
+```
+
+## Stage8 Verification Checklist
+
+- `/api/health` returns `version=0.8.0`, `stage=phase-8`.
+- `/api/health` returns `stream_mode="upstream_real_ollama"`.
+- `/api/health` returns `ollama_stream_supported=true`.
+- `/api/chat/stream` returns multiple `data:` events.
+- Ollama stream events include `stream_mode="upstream_real"`.
+- Ollama stream events include `upstream_stream_mode="ollama_stream_true"`.
+- `/api/rag/query/stream` returns metadata and deltas.
+- `/api/metrics` shows `last_stream_mode="upstream_real"`.
+- Setting `OLLAMA_STREAM=false` falls back to pseudo stream.
+
+## Stage8 Known Limitations
+
+- Downstream HTTP response is still buffered.
+- No Reactor write flush/chunked transfer refactor is implemented.
+- Gemini true streaming is not implemented.
+- WebSocket is not implemented.
+- JSON parsing remains lightweight.
+
+## Stage8 Suggested Commit Message
+
+```text
+feat: add upstream real ollama streaming support
+```

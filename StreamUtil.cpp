@@ -27,9 +27,18 @@ bool hasContinuationBytes(const std::string &text, size_t pos, size_t bytes) {
 void appendProviderFields(std::ostringstream &event, const std::string &provider,
                           const std::string &model,
                           const std::optional<std::string> &fallbackFrom,
-                          const std::optional<std::string> &fallbackTo) {
+                          const std::optional<std::string> &fallbackTo,
+                          const std::string &streamMode,
+                          const std::string &upstreamStreamMode) {
   event << ",\"provider\":\"" << escapeJsonString(provider) << "\""
         << ",\"model\":\"" << escapeJsonString(model) << "\"";
+  if (!streamMode.empty()) {
+    event << ",\"stream_mode\":\"" << escapeJsonString(streamMode) << "\"";
+  }
+  if (!upstreamStreamMode.empty()) {
+    event << ",\"upstream_stream_mode\":\""
+          << escapeJsonString(upstreamStreamMode) << "\"";
+  }
   if (fallbackFrom) {
     event << ",\"fallback_from\":\"" << escapeJsonString(*fallbackFrom)
           << "\"";
@@ -80,7 +89,8 @@ StreamBuildResult buildStreamFromAnswer(
     const std::string &answer, size_t chunkSize,
     const std::optional<std::string> &fallbackFrom,
     const std::optional<std::string> &fallbackTo,
-    const std::string &metadataJsonFields) {
+    const std::string &metadataJsonFields, const std::string &streamMode,
+    const std::string &upstreamStreamMode) {
   StreamBuildResult result;
 
   if (!metadataJsonFields.empty()) {
@@ -88,7 +98,8 @@ StreamBuildResult buildStreamFromAnswer(
     metadata << "{"
              << "\"id\":\"" << escapeJsonString(id) << "\","
              << "\"object\":\"" << escapeJsonString(object) << "\"";
-    appendProviderFields(metadata, provider, model, fallbackFrom, fallbackTo);
+    appendProviderFields(metadata, provider, model, fallbackFrom, fallbackTo,
+                         streamMode, upstreamStreamMode);
     metadata << "," << metadataJsonFields << "}";
     result.body += buildSseDataEvent(metadata.str());
   }
@@ -99,7 +110,8 @@ StreamBuildResult buildStreamFromAnswer(
           << "\"id\":\"" << escapeJsonString(id) << "\","
           << "\"object\":\"" << escapeJsonString(object) << "\","
           << "\"delta\":\"" << escapeJsonString(chunk) << "\"";
-    appendProviderFields(event, provider, model, fallbackFrom, fallbackTo);
+    appendProviderFields(event, provider, model, fallbackFrom, fallbackTo,
+                         streamMode, upstreamStreamMode);
     event << "}";
     result.body += buildSseDataEvent(event.str());
     ++result.chunks;
@@ -109,8 +121,67 @@ StreamBuildResult buildStreamFromAnswer(
   done << "{"
        << "\"id\":\"" << escapeJsonString(id) << "\","
        << "\"object\":\"" << escapeJsonString(object) << "\","
-       << "\"done\":true"
-       << "}";
+       << "\"done\":true";
+  if (!streamMode.empty()) {
+    done << ",\"stream_mode\":\"" << escapeJsonString(streamMode) << "\"";
+  }
+  if (!upstreamStreamMode.empty()) {
+    done << ",\"upstream_stream_mode\":\""
+         << escapeJsonString(upstreamStreamMode) << "\"";
+  }
+  done << "}";
+  result.body += buildSseDataEvent(done.str());
+  return result;
+}
+
+StreamBuildResult buildStreamFromDeltas(
+    const std::string &id, const std::string &object,
+    const std::string &provider, const std::string &model,
+    const std::vector<std::string> &deltas,
+    const std::optional<std::string> &fallbackFrom,
+    const std::optional<std::string> &fallbackTo,
+    const std::string &metadataJsonFields, const std::string &streamMode,
+    const std::string &upstreamStreamMode) {
+  StreamBuildResult result;
+
+  if (!metadataJsonFields.empty()) {
+    std::ostringstream metadata;
+    metadata << "{"
+             << "\"id\":\"" << escapeJsonString(id) << "\","
+             << "\"object\":\"" << escapeJsonString(object) << "\"";
+    appendProviderFields(metadata, provider, model, fallbackFrom, fallbackTo,
+                         streamMode, upstreamStreamMode);
+    metadata << "," << metadataJsonFields << "}";
+    result.body += buildSseDataEvent(metadata.str());
+  }
+
+  for (const auto &delta : deltas) {
+    if (delta.empty()) continue;
+    std::ostringstream event;
+    event << "{"
+          << "\"id\":\"" << escapeJsonString(id) << "\","
+          << "\"object\":\"" << escapeJsonString(object) << "\","
+          << "\"delta\":\"" << escapeJsonString(delta) << "\"";
+    appendProviderFields(event, provider, model, fallbackFrom, fallbackTo,
+                         streamMode, upstreamStreamMode);
+    event << "}";
+    result.body += buildSseDataEvent(event.str());
+    ++result.chunks;
+  }
+
+  std::ostringstream done;
+  done << "{"
+       << "\"id\":\"" << escapeJsonString(id) << "\","
+       << "\"object\":\"" << escapeJsonString(object) << "\","
+       << "\"done\":true";
+  if (!streamMode.empty()) {
+    done << ",\"stream_mode\":\"" << escapeJsonString(streamMode) << "\"";
+  }
+  if (!upstreamStreamMode.empty()) {
+    done << ",\"upstream_stream_mode\":\""
+         << escapeJsonString(upstreamStreamMode) << "\"";
+  }
+  done << "}";
   result.body += buildSseDataEvent(done.str());
   return result;
 }

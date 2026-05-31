@@ -1142,3 +1142,179 @@ curl -N -X POST http://127.0.0.1/api/rag/query/stream \
 #### 验证结果预期
 
 返回 SSE error event，包含 `error_message`，并以 `done=true` 结束。
+
+## Stage8 Debug Notes
+
+### Issue 1: Upstream Real Stream vs Downstream Buffered SSE
+
+#### 问题现象
+
+Stage8 需要真实读取 Ollama `stream=true`，但当前 WebServer 响应路径仍以一次性
+body 写回为主。
+
+#### 原因分析
+
+真正向浏览器逐 token flush 需要改造 Reactor 写回时机、HTTP chunked transfer
+或连接生命周期。为避免大规模重构底层网络模块，本阶段只实现 upstream real
+stream。
+
+#### 修复方式
+
+`HttpClient::postJsonStream(...)` 真实读取 Ollama streaming JSON lines；
+Gateway 将这些 deltas 转换成 SSE-style `data:` events，但下游仍一次性返回
+buffered SSE body。
+
+#### 验证命令
+
+```bash
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"用三句话介绍一下 RAG"}'
+```
+
+#### 验证结果预期
+
+返回中出现 `stream_mode="upstream_real"` 和
+`upstream_stream_mode="ollama_stream_true"`。
+
+### Issue 2: Ollama Stream JSON Line Parse Issue
+
+#### 问题现象
+
+Ollama `stream=true` 返回多行 JSON，每行可能包含 `response`，最后一行可能只有
+`done=true` 或统计字段。某些行解析不到 `response`。
+
+#### 原因分析
+
+streaming 响应不是单个 JSON object，而是 newline-delimited JSON。最后的 done
+行可能没有非空 `response`。
+
+#### 修复方式
+
+新增：
+
+- `extractOllamaStreamDelta(...)`
+- `extractOllamaStreamDone(...)`
+
+解析不到 `response` 的行不会导致崩溃；只要有有效 delta，就可以成功返回。
+如果所有行都没有 delta，则返回结构化错误。
+
+#### 验证命令
+
+```bash
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello"}'
+```
+
+#### 验证结果预期
+
+多条 delta event 后有 `done=true`。
+
+### Issue 3: Ollama Service Not Running
+
+#### 问题现象
+
+当 Ollama 未启动时，stream 请求失败。
+
+#### 原因分析
+
+`OllamaProvider::streamChat(...)` 请求
+`http://127.0.0.1:11434/api/generate`，服务未启动会导致连接失败。
+
+#### 修复方式
+
+`HttpClient::postJsonStream(...)` 返回 curl error；
+`OllamaProvider::streamChat(...)` 包装为 safe error message；
+Gateway 返回 SSE error event，并以 `done=true` 结束。
+
+#### 验证命令
+
+```bash
+sudo systemctl stop ollama
+
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello"}'
+```
+
+#### 验证结果预期
+
+返回 SSE error event，不崩溃；错误中包含 `base_url`、`model`、`timeout_ms`
+等安全诊断，不包含 API Key。
+
+### Issue 4: UTF-8 Delta Handling
+
+#### 问题现象
+
+Ollama delta 中可能包含中文、换行和引号。
+
+#### 原因分析
+
+SSE body 内嵌 JSON，需要对 delta 做 JSON escape，否则引号、换行会破坏 JSON。
+
+#### 修复方式
+
+所有 stream delta 都通过 `escapeJsonString(...)` 输出。中文 UTF-8 字节原样保留；
+换行、引号、反斜杠会被转义。
+
+#### 验证命令
+
+```bash
+curl -N -X POST http://127.0.0.1/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"请用中文介绍 RAG，并包含双引号"}'
+```
+
+#### 验证结果预期
+
+返回的 `data:` JSON 行可被正常阅读，不出现破坏 JSON 的裸引号或裸换行。
+
+### Issue 5: Fallback Stream Behavior
+
+#### 问题现象
+
+Gemini 网络失败后，需要 fallback 到 Ollama，并尽量使用 Ollama `stream=true`。
+
+#### 原因分析
+
+Stage7 fallback 可以生成完整 Ollama answer 再伪流式输出；Stage8 需要在 fallback
+分支中优先调用 `OllamaProvider::streamChat(...)`。
+
+#### 修复方式
+
+`executeChatStreamInternal(...)` 和 `executeRagStreamInternal(...)` 在 Gemini
+失败且 `enable_ollama_fallback=true`、`OLLAMA_STREAM=true` 时，调用
+`OllamaProvider::streamChat(...)`。失败时返回 SSE error event。
+
+#### 验证命令
+
+```bash
+sudo GEMINI_API_KEY="test_key_123" \
+LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+LIGHTAGENT_ENABLE_OLLAMA_FALLBACK="true" \
+OLLAMA_MODEL="qwen2.5:0.5b" \
+OLLAMA_STREAM="true" \
+LIGHTAGENT_STREAM_MODE="upstream_real_ollama" \
+LIGHTAGENT_KB_DIR="./knowledge_base" \
+LIGHTAGENT_REQUEST_TIMEOUT_MS="5000" \
+LIGHTAGENT_OLLAMA_REQUEST_TIMEOUT_MS="30000" \
+./WebServer
+```
+
+In another terminal:
+
+```bash
+curl -N -X POST http://127.0.0.1/api/rag/query/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？","top_k":3}'
+
+curl http://127.0.0.1/api/metrics
+```
+
+#### 验证结果预期
+
+- stream response includes `provider="ollama"`.
+- stream response includes `fallback_from="gemini"` and `fallback_to="ollama"`.
+- stream response includes `stream_mode="upstream_real"`.
+- metrics includes `last_upstream_stream_mode="ollama_stream_true"`.

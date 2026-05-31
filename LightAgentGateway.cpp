@@ -13,6 +13,7 @@
 
 #include "GatewayConfig.h"
 #include "JsonUtil.h"
+#include "OllamaProvider.h"
 #include "ProviderFactory.h"
 #include "RagEngine.h"
 #include "StreamUtil.h"
@@ -47,6 +48,8 @@ struct GatewayMetrics {
   std::string last_stream_provider;
   int last_stream_chunks = 0;
   std::string last_stream_type;
+  std::string last_stream_mode;
+  std::string last_upstream_stream_mode;
   std::string last_fallback_from;
   std::string last_fallback_to;
 };
@@ -173,7 +176,10 @@ std::string getLastRagProvider() {
 
 void setLastStreamStatus(std::string type, const std::string &provider,
                          bool success, std::string error, int chunks,
-                         long long latencyMs) {
+                         long long latencyMs, std::string streamMode,
+                         std::string upstreamStreamMode,
+                         std::string fallbackFrom = "",
+                         std::string fallbackTo = "") {
   auto &metrics = metricsState();
   metrics.last_stream_latency_ms = latencyMs;
   metrics.last_stream_success = success;
@@ -182,6 +188,10 @@ void setLastStreamStatus(std::string type, const std::string &provider,
   metrics.last_stream_provider = provider;
   metrics.last_stream_error = std::move(error);
   metrics.last_stream_chunks = chunks;
+  metrics.last_stream_mode = std::move(streamMode);
+  metrics.last_upstream_stream_mode = std::move(upstreamStreamMode);
+  if (!fallbackFrom.empty()) metrics.last_fallback_from = std::move(fallbackFrom);
+  if (!fallbackTo.empty()) metrics.last_fallback_to = std::move(fallbackTo);
 }
 
 std::string getLastStreamError() {
@@ -206,6 +216,18 @@ std::string getLastStreamType() {
   auto &metrics = metricsState();
   std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
   return metrics.last_stream_type;
+}
+
+std::string getLastStreamMode() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_stream_mode;
+}
+
+std::string getLastUpstreamStreamMode() {
+  auto &metrics = metricsState();
+  std::lock_guard<std::mutex> lock(metrics.last_provider_mutex);
+  return metrics.last_upstream_stream_mode;
 }
 
 bool shouldFallbackToOllama(const GatewayConfig &config,
@@ -243,6 +265,22 @@ int clampTopK(int value) { return std::max(1, std::min(10, value)); }
 
 size_t streamChunkSize(const GatewayConfig &config) {
   return static_cast<size_t>(std::max(1, config.stream_chunk_size));
+}
+
+std::string providerForRagRequest(const GatewayConfig &config) {
+  if (!config.rag_provider.empty()) return config.rag_provider;
+  return config.default_provider;
+}
+
+bool isOllamaStreamEnabled(const GatewayConfig &config) {
+  return config.stream_enabled && config.enable_real_ollama &&
+         config.ollama_stream;
+}
+
+std::string joinDeltas(const std::vector<std::string> &deltas) {
+  std::ostringstream joined;
+  for (const auto &delta : deltas) joined << delta;
+  return joined.str();
 }
 
 std::string chunkPreview(std::string content) {
@@ -305,6 +343,26 @@ struct RagExecution {
   bool bad_request = false;
 };
 
+struct ChatStreamExecution {
+  ChatRequest request;
+  ChatResult pseudo_result;
+  ChatStreamResult stream_result;
+  bool bad_request = false;
+  bool used_upstream_stream = false;
+  bool fallback_used = false;
+  std::optional<std::string> fallback_from;
+  std::optional<std::string> fallback_to;
+  long long latency_ms = 0;
+};
+
+struct RagStreamExecution {
+  RagResult rag_result;
+  ChatStreamResult stream_result;
+  bool bad_request = false;
+  bool used_upstream_stream = false;
+  long long latency_ms = 0;
+};
+
 ChatExecution executeChatInternal(std::string_view requestBody) {
   const auto started = Clock::now();
   ChatExecution execution;
@@ -359,6 +417,145 @@ RagExecution executeRagInternal(std::string_view requestBody) {
   RagEngine engine(config);
   execution.result = engine.query(*question, topK);
   if (execution.result.fallback_from) ++metricsState().fallback_count;
+  return execution;
+}
+
+ChatStreamExecution executeChatStreamInternal(std::string_view requestBody) {
+  const auto started = Clock::now();
+  ChatStreamExecution execution;
+
+  auto message = extractJsonStringField(requestBody, "message");
+  execution.request =
+      makeChatRequest(message.value_or(""),
+                      extractJsonStringField(requestBody, "session_id"),
+                      extractJsonStringField(requestBody, "system_prompt"));
+
+  const GatewayConfig &config = gatewayConfig();
+  if (!message || message->empty()) {
+    execution.bad_request = true;
+    execution.pseudo_result.provider = config.default_provider;
+    execution.pseudo_result.success = false;
+    execution.pseudo_result.error_message = "message field is required";
+  } else if (lowerCopy(config.default_provider) == "ollama" &&
+             isOllamaStreamEnabled(config)) {
+    OllamaProvider ollama(config);
+    execution.stream_result = ollama.streamChat(execution.request);
+    execution.used_upstream_stream = true;
+  } else if (lowerCopy(config.default_provider) == "gemini" &&
+             isOllamaStreamEnabled(config)) {
+    std::unique_ptr<ILlmProvider> provider = ProviderFactory::create(config);
+    ChatResult primary = provider->chat(execution.request);
+    if (primary.success || !shouldFallbackToOllama(config, primary)) {
+      execution.pseudo_result = primary;
+    } else {
+      ++metricsState().fallback_count;
+      OllamaProvider ollama(config);
+      execution.stream_result = ollama.streamChat(execution.request);
+      execution.used_upstream_stream = true;
+      execution.fallback_used = true;
+      execution.fallback_from = "gemini";
+      execution.fallback_to = "ollama";
+      if (!execution.stream_result.success) {
+        execution.stream_result.error_message =
+            "Gemini failed: " +
+            primary.error_message.value_or("primary provider failed") +
+            "; Ollama stream fallback failed: " +
+            execution.stream_result.error_message;
+      }
+    }
+  } else {
+    ChatExecution pseudo = executeChatInternal(requestBody);
+    execution.request = pseudo.request;
+    execution.pseudo_result = pseudo.result;
+    execution.bad_request = pseudo.bad_request;
+  }
+
+  execution.latency_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                            started)
+          .count();
+  return execution;
+}
+
+RagStreamExecution executeRagStreamInternal(std::string_view requestBody) {
+  const auto started = Clock::now();
+  RagStreamExecution execution;
+
+  auto question = extractJsonStringField(requestBody, "question");
+  if (!question || question->empty()) {
+    question = extractJsonStringField(requestBody, "message");
+  }
+
+  const GatewayConfig &config = gatewayConfig();
+  if (!question || question->empty()) {
+    execution.bad_request = true;
+    execution.rag_result.question = "";
+    execution.rag_result.error_message = "question field is required";
+    execution.rag_result.latency_ms = 0;
+  } else if ((lowerCopy(providerForRagRequest(config)) == "ollama" ||
+              lowerCopy(providerForRagRequest(config)) == "gemini") &&
+             isOllamaStreamEnabled(config)) {
+    const int topK =
+        clampTopK(extractJsonIntField(requestBody, "top_k").value_or(
+            config.rag_top_k));
+    RagEngine engine(config);
+    RagPreparedRequest prepared = engine.prepareRequest(*question, topK);
+    execution.rag_result = prepared.result;
+
+    if (!prepared.ready) {
+      // Keep the retrieval error in rag_result.
+    } else if (lowerCopy(providerForRagRequest(config)) == "ollama") {
+      OllamaProvider ollama(config);
+      execution.stream_result = ollama.streamChat(prepared.chat_request);
+      execution.used_upstream_stream = true;
+      execution.rag_result.provider = execution.stream_result.provider;
+      execution.rag_result.model = execution.stream_result.model;
+      execution.rag_result.success = execution.stream_result.success;
+      execution.rag_result.answer = joinDeltas(execution.stream_result.deltas);
+      execution.rag_result.error_message = execution.stream_result.error_message;
+    } else {
+      std::unique_ptr<ILlmProvider> provider =
+          ProviderFactory::create(config, "gemini");
+      ChatResult primary = provider->chat(prepared.chat_request);
+      if (primary.success || !shouldFallbackToOllama(config, primary)) {
+        execution.rag_result.success = primary.success;
+        execution.rag_result.answer = primary.answer;
+        execution.rag_result.provider = primary.provider;
+        execution.rag_result.model = primary.model;
+        execution.rag_result.error_message = primary.error_message.value_or("");
+      } else {
+        ++metricsState().fallback_count;
+        OllamaProvider ollama(config);
+        execution.stream_result = ollama.streamChat(prepared.chat_request);
+        execution.used_upstream_stream = true;
+        execution.rag_result.provider = execution.stream_result.provider;
+        execution.rag_result.model = execution.stream_result.model;
+        execution.rag_result.success = execution.stream_result.success;
+        execution.rag_result.answer = joinDeltas(execution.stream_result.deltas);
+        execution.rag_result.fallback_from = "gemini";
+        execution.rag_result.fallback_to = "ollama";
+        if (!execution.stream_result.success) {
+          execution.rag_result.error_message =
+              "Gemini failed: " +
+              primary.error_message.value_or("primary provider failed") +
+              "; Ollama stream fallback failed: " +
+              execution.stream_result.error_message;
+          execution.stream_result.error_message =
+              execution.rag_result.error_message;
+        }
+      }
+    }
+  } else {
+    RagExecution pseudo = executeRagInternal(requestBody);
+    execution.rag_result = pseudo.result;
+    execution.bad_request = pseudo.bad_request;
+  }
+
+  execution.latency_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                            started)
+          .count();
+  execution.rag_result.latency_ms = execution.latency_ms;
   return execution;
 }
 
@@ -481,6 +678,9 @@ LightAgentGateway::Response LightAgentGateway::health() {
        << (config.stream_enabled ? "true" : "false") << ","
        << "\"stream_mode\":\"" << escapeJsonString(config.stream_mode) << "\","
        << "\"stream_chunk_size\":" << config.stream_chunk_size << ","
+       << "\"ollama_stream_supported\":true,"
+       << "\"ollama_stream\":" << (config.ollama_stream ? "true" : "false")
+       << ","
        << "\"static_root\":\""
        << escapeJsonString(config.static_root.generic_string()) << "\","
        << "\"request_timeout_ms\":" << config.request_timeout_ms << ","
@@ -561,6 +761,10 @@ LightAgentGateway::Response LightAgentGateway::metrics() {
   body << ",\"last_stream_chunks\":" << getLastStreamChunks();
   body << ",\"last_stream_type\":\"" << escapeJsonString(getLastStreamType())
        << "\"";
+  body << ",\"last_stream_mode\":\"" << escapeJsonString(getLastStreamMode())
+       << "\"";
+  body << ",\"last_upstream_stream_mode\":\""
+       << escapeJsonString(getLastUpstreamStreamMode()) << "\"";
   body << ",\"last_fallback_from\":\""
        << escapeJsonString(getLastFallbackFrom()) << "\"";
   body << ",\"last_fallback_to\":\""
@@ -596,34 +800,62 @@ LightAgentGateway::Response LightAgentGateway::chatStream(
         "stream API is disabled by config");
     setLastStreamStatus("chat", config.default_provider, false,
                         "stream API is disabled by config",
-                        static_cast<int>(error.chunks), 0);
+                        static_cast<int>(error.chunks), 0, "disabled", "");
     return streamResponse(503, "Service Unavailable", error.body);
   }
 
-  ChatExecution execution = executeChatInternal(request.body);
+  ChatStreamExecution execution = executeChatStreamInternal(request.body);
   StreamBuildResult stream;
-  if (execution.result.success) {
+  bool success = execution.used_upstream_stream
+                     ? execution.stream_result.success
+                     : execution.pseudo_result.success;
+  std::string provider = execution.used_upstream_stream
+                             ? execution.stream_result.provider
+                             : execution.pseudo_result.provider;
+  std::string model = execution.used_upstream_stream
+                          ? execution.stream_result.model
+                          : execution.pseudo_result.model;
+  std::string errorMessage =
+      execution.used_upstream_stream
+          ? execution.stream_result.error_message
+          : execution.pseudo_result.error_message.value_or("");
+  std::string streamMode =
+      execution.used_upstream_stream ? "upstream_real" : "pseudo";
+  std::string upstreamMode =
+      execution.used_upstream_stream ? execution.stream_result.upstream_stream_mode
+                                     : "";
+
+  if (success && execution.used_upstream_stream) {
+    stream = buildStreamFromDeltas(
+        "lightagent-chat-stream-1", "chat.completion.chunk", provider, model,
+        execution.stream_result.deltas, execution.fallback_from,
+        execution.fallback_to, "", streamMode, upstreamMode);
+  } else if (success) {
     stream = buildStreamFromAnswer(
-        "lightagent-chat-stream-1", "chat.completion.chunk",
-        execution.result.provider, execution.result.model,
-        execution.result.answer, streamChunkSize(config),
-        execution.result.fallback_from, execution.result.fallback_to);
+        "lightagent-chat-stream-1", "chat.completion.chunk", provider, model,
+        execution.pseudo_result.answer, streamChunkSize(config),
+        execution.pseudo_result.fallback_from, execution.pseudo_result.fallback_to,
+        "", streamMode, upstreamMode);
   } else {
     stream = buildStreamError(
         "lightagent-chat-stream-1", "chat.completion.chunk",
-        execution.result.error_message.value_or("chat stream failed"));
+        errorMessage.empty() ? "chat stream failed" : errorMessage);
   }
 
   const auto latencyMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
                                                             started)
           .count();
-  setLastStreamStatus("chat", execution.result.provider,
-                      execution.result.success,
-                      execution.result.error_message.value_or(""),
-                      static_cast<int>(stream.chunks), latencyMs);
+  setLastStreamStatus("chat", provider, success, errorMessage,
+                      static_cast<int>(stream.chunks), latencyMs, streamMode,
+                      upstreamMode, execution.fallback_from.value_or(""),
+                      execution.fallback_to.value_or(""));
 
-  return streamResponse(chatStatusCode(execution), chatReason(execution),
+  const int statusCode = success ? 200 : (execution.bad_request ? 400 : 503);
+  return streamResponse(statusCode,
+                        success ? "OK"
+                                : (statusCode == 400 ? "Bad Request"
+                                                     : "Service Unavailable"),
                         stream.body);
 }
 
@@ -647,43 +879,64 @@ LightAgentGateway::Response LightAgentGateway::ragQueryStream(
         "stream API is disabled by config");
     setLastStreamStatus("rag", config.default_provider, false,
                         "stream API is disabled by config",
-                        static_cast<int>(error.chunks), 0);
+                        static_cast<int>(error.chunks), 0, "disabled", "");
     return streamResponse(503, "Service Unavailable", error.body);
   }
 
-  RagExecution execution = executeRagInternal(request.body);
-  setLastRagStatus(execution.result);
+  RagStreamExecution execution = executeRagStreamInternal(request.body);
+  setLastRagStatus(execution.rag_result);
 
   std::ostringstream metadata;
-  metadata << "\"question\":\"" << escapeJsonString(execution.result.question)
+  metadata << "\"question\":\"" << escapeJsonString(execution.rag_result.question)
            << "\","
-           << "\"top_k\":" << execution.result.top_k << ","
+           << "\"top_k\":" << execution.rag_result.top_k << ","
            << "\"retrieved_chunks_count\":"
-           << execution.result.retrieved_chunks.size();
+           << execution.rag_result.retrieved_chunks.size();
 
   StreamBuildResult stream;
-  if (execution.result.success) {
+  const bool success = execution.rag_result.success;
+  const std::string streamMode =
+      execution.used_upstream_stream ? "upstream_real" : "pseudo";
+  const std::string upstreamMode =
+      execution.used_upstream_stream ? execution.stream_result.upstream_stream_mode
+                                     : "";
+  if (success && execution.used_upstream_stream) {
+    stream = buildStreamFromDeltas(
+        "lightagent-rag-stream-1", "rag.query.chunk",
+        execution.rag_result.provider, execution.rag_result.model,
+        execution.stream_result.deltas, execution.rag_result.fallback_from,
+        execution.rag_result.fallback_to, metadata.str(), streamMode,
+        upstreamMode);
+  } else if (success) {
     stream = buildStreamFromAnswer(
         "lightagent-rag-stream-1", "rag.query.chunk",
-        execution.result.provider, execution.result.model,
-        execution.result.answer, streamChunkSize(config),
-        execution.result.fallback_from, execution.result.fallback_to,
-        metadata.str());
+        execution.rag_result.provider, execution.rag_result.model,
+        execution.rag_result.answer, streamChunkSize(config),
+        execution.rag_result.fallback_from, execution.rag_result.fallback_to,
+        metadata.str(), streamMode, upstreamMode);
   } else {
     stream = buildStreamError(
         "lightagent-rag-stream-1", "rag.query.chunk",
-        execution.result.error_message.empty() ? "rag stream failed"
-                                               : execution.result.error_message);
+        execution.rag_result.error_message.empty() ? "rag stream failed"
+                                                   : execution.rag_result.error_message);
   }
 
   const auto latencyMs =
       std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
                                                             started)
           .count();
-  setLastStreamStatus("rag", execution.result.provider,
-                      execution.result.success, execution.result.error_message,
-                      static_cast<int>(stream.chunks), latencyMs);
+  setLastStreamStatus("rag", execution.rag_result.provider,
+                      execution.rag_result.success,
+                      execution.rag_result.error_message,
+                      static_cast<int>(stream.chunks), latencyMs, streamMode,
+                      upstreamMode,
+                      execution.rag_result.fallback_from.value_or(""),
+                      execution.rag_result.fallback_to.value_or(""));
 
-  return streamResponse(ragStatusCode(execution), ragReason(execution),
+  const int statusCode = success ? 200 : (execution.bad_request ? 400 : 503);
+  return streamResponse(statusCode,
+                        success ? "OK"
+                                : (statusCode == 400 ? "Bad Request"
+                                                     : "Service Unavailable"),
                         stream.body);
 }

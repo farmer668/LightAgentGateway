@@ -38,30 +38,50 @@ bool shouldFallbackToOllama(const GatewayConfig &config,
 
 RagEngine::RagEngine(const GatewayConfig &config) : config_(config) {}
 
-RagResult RagEngine::query(const std::string &question, int top_k) {
+RagPreparedRequest RagEngine::prepareRequest(const std::string &question,
+                                             int top_k) {
   const auto started = Clock::now();
-  RagResult result;
-  result.question = question;
-  result.top_k = top_k;
+  RagPreparedRequest prepared;
+  prepared.result.question = question;
+  prepared.result.top_k = top_k;
 
   KnowledgeBase knowledgeBase(config_);
   if (!knowledgeBase.load()) {
-    result.error_message = knowledgeBase.lastError();
-    result.latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            Clock::now() - started)
-                            .count();
-    return result;
+    prepared.result.error_message = knowledgeBase.lastError();
+    prepared.result.latency_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                              started)
+            .count();
+    return prepared;
   }
 
-  result.retrieved_chunks = knowledgeBase.search(question, top_k);
-  if (result.retrieved_chunks.empty()) {
-    result.answer = "知识库中没有找到相关内容";
-    result.error_message = "no relevant chunks found";
-    result.latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            Clock::now() - started)
-                            .count();
-    return result;
+  prepared.result.retrieved_chunks = knowledgeBase.search(question, top_k);
+  if (prepared.result.retrieved_chunks.empty()) {
+    prepared.result.answer = "知识库中没有找到相关内容";
+    prepared.result.error_message = "no relevant chunks found";
+    prepared.result.latency_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                              started)
+            .count();
+    return prepared;
   }
+
+  prepared.chat_request = makeChatRequest(question);
+  prepared.chat_request.system_prompt =
+      buildPrompt(question, prepared.result.retrieved_chunks);
+  prepared.ready = true;
+  prepared.result.latency_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() -
+                                                            started)
+          .count();
+  return prepared;
+}
+
+RagResult RagEngine::query(const std::string &question, int top_k) {
+  const auto started = Clock::now();
+  RagPreparedRequest prepared = prepareRequest(question, top_k);
+  RagResult result = prepared.result;
+  if (!prepared.ready) return result;
 
   if (!config_.rag_enable_llm_answer) {
     result.success = true;
@@ -72,9 +92,7 @@ RagResult RagEngine::query(const std::string &question, int top_k) {
     return result;
   }
 
-  ChatRequest request = makeChatRequest(question);
-  request.system_prompt = buildPrompt(question, result.retrieved_chunks);
-  ChatResult chatResult = callProvider(request);
+  ChatResult chatResult = callProvider(prepared.chat_request);
 
   result.success = chatResult.success;
   result.answer = chatResult.answer;

@@ -21,11 +21,18 @@ struct RagResult {
   long long latency_ms = 0;
 };
 
+struct RagPreparedRequest {
+  RagResult result;
+  ChatRequest chat_request;
+  bool ready = false;
+};
+
 class RagEngine {
  public:
   explicit RagEngine(const GatewayConfig &config);
 
   RagResult query(const std::string &question, int top_k);
+  RagPreparedRequest prepareRequest(const std::string &question, int top_k);
 
  private:
   GatewayConfig config_;
