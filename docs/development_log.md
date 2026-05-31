@@ -459,3 +459,151 @@ ollama pull qwen2.5:0.5b
 ```text
 Add Stage 5 Ollama provider and Gemini fallback
 ```
+
+## Stage 6 Goal
+
+Add a local file based RAG query skeleton without introducing a vector database.
+The flow is: user question -> local `.txt` / `.md` files -> keyword chunk
+retrieval -> context prompt -> current LLM provider -> structured RAG JSON.
+
+## Stage 6 Modified Files
+
+- `CMakeLists.txt`
+- `GatewayConfig.h`
+- `GatewayConfig.cpp`
+- `JsonUtil.h`
+- `JsonUtil.cpp`
+- `LightAgentGateway.h`
+- `LightAgentGateway.cpp`
+- `KnowledgeBase.h`
+- `KnowledgeBase.cpp`
+- `RagEngine.h`
+- `RagEngine.cpp`
+- `config.example.json`
+- `knowledge_base/rag_intro.md`
+- `knowledge_base/lightagent_gateway.md`
+- `scripts/start_gateway_rag_ollama.sh.example`
+- `docs/development_log.md`
+- `docs/debug_log.md`
+
+## Stage 6 New Classes / Structs / Functions
+
+- `DocumentChunk`
+- `KnowledgeBase`
+  - `KnowledgeBase::load`
+  - `KnowledgeBase::search`
+  - `KnowledgeBase::lastError`
+- `RagResult`
+- `RagEngine`
+  - `RagEngine::query`
+  - `RagEngine::callProvider`
+  - `RagEngine::buildPrompt`
+- `LightAgentGateway::ragQuery`
+- `extractJsonIntField`
+
+## Stage 6 API Changes
+
+- Added `POST /api/rag/query`.
+- Request accepts `question` or `message`.
+- Optional `top_k` is clamped to `1..10`.
+- Response includes `retrieved_chunks`, provider/model, fallback fields,
+  latency, and structured errors.
+- Existing endpoints remain unchanged:
+  - `GET /hello`
+  - `GET /favicon.ico`
+  - `GET /api/health`
+  - `GET /api/metrics`
+  - `POST /api/chat`
+
+## Stage 6 RAG Query Flow
+
+1. Parse `question`; fallback to `message`.
+2. Load files from `knowledge_base_dir`.
+3. Read only `.txt` and `.md` files.
+4. Skip files larger than 1 MB.
+5. Split documents by `rag_chunk_size`.
+6. Score chunks by simple keyword and substring matching.
+7. Return top-k chunks.
+8. Build a context prompt bounded by `rag_max_context_chars`.
+9. Call the configured provider through `ProviderFactory`.
+10. If Gemini fails and Ollama fallback is enabled, fallback to Ollama.
+
+## Stage 6 Config Changes
+
+- Default `version` is `0.6.0`.
+- Default `stage` is `phase-6`.
+- Added:
+  - `knowledge_base_dir`, default `./knowledge_base`
+  - `rag_top_k`, default `3`
+  - `rag_chunk_size`, default `800`
+  - `rag_enable_llm_answer`, default `true`
+  - `rag_provider`, default empty, meaning use `default_provider`
+  - `rag_max_context_chars`, default `3000`
+- Added environment variables:
+  - `LIGHTAGENT_KB_DIR`
+  - `LIGHTAGENT_RAG_TOP_K`
+  - `LIGHTAGENT_RAG_CHUNK_SIZE`
+  - `LIGHTAGENT_RAG_ENABLE_LLM_ANSWER`
+  - `LIGHTAGENT_RAG_PROVIDER`
+  - `LIGHTAGENT_RAG_MAX_CONTEXT_CHARS`
+
+## Stage 6 Build Commands
+
+```bash
+make clean
+make
+```
+
+## Stage 6 Runtime Commands
+
+```bash
+systemctl status ollama
+ollama list
+sudo LIGHTAGENT_DEFAULT_PROVIDER="ollama" \
+  OLLAMA_MODEL="qwen2.5:0.5b" \
+  LIGHTAGENT_KB_DIR="./knowledge_base" \
+  ./WebServer
+```
+
+## Stage 6 Curl Test Commands
+
+```bash
+curl http://127.0.0.1/api/health
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？","top_k":3}'
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"LightAgent Gateway 支持哪些 Provider？","top_k":3}'
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"数据库事务隔离级别有哪些？","top_k":3}'
+curl http://127.0.0.1/api/metrics
+```
+
+## Stage 6 Verification Checklist
+
+- `GET /api/health` returns `phase-6` and RAG config fields.
+- `POST /api/rag/query` returns `object: "rag.query"`.
+- Matching questions return non-empty `retrieved_chunks`.
+- Each chunk content is capped to 500 characters in the response.
+- Missing question returns `question field is required`.
+- If LLM generation fails after retrieval, `retrieved_chunks` are still
+  returned with `error_message`.
+- `/api/metrics` updates `rag_requests_total`, `last_rag_chunks`, and
+  `last_rag_provider`.
+
+## Stage 6 Known Limitations
+
+- No embeddings are used.
+- No FAISS, Milvus, Chroma, or other vector database is used.
+- Retrieval is keyword based and intentionally simple.
+- JSON parsing remains lightweight.
+- RAG prompt size is bounded but not token-aware.
+- No streaming output.
+
+## Stage 6 Suggested Commit Message
+
+```text
+Add Stage 6 local file RAG query skeleton
+```

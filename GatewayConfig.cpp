@@ -150,6 +150,18 @@ void applyValue(GatewayConfig &config, const std::string &key,
     config.ollama_model = value;
   } else if (key == "static_root") {
     config.static_root = value;
+  } else if (key == "knowledge_base_dir") {
+    config.knowledge_base_dir = value;
+  } else if (key == "rag_top_k") {
+    if (auto parsed = parseInt(value)) config.rag_top_k = *parsed;
+  } else if (key == "rag_chunk_size") {
+    if (auto parsed = parseInt(value)) config.rag_chunk_size = *parsed;
+  } else if (key == "rag_enable_llm_answer") {
+    if (auto parsed = parseBool(value)) config.rag_enable_llm_answer = *parsed;
+  } else if (key == "rag_provider") {
+    config.rag_provider = value;
+  } else if (key == "rag_max_context_chars") {
+    if (auto parsed = parseInt(value)) config.rag_max_context_chars = *parsed;
   } else if (key == "request_timeout_ms") {
     if (auto parsed = parseInt(value)) config.request_timeout_ms = *parsed;
   } else if (key == "enable_real_gemini") {
@@ -174,6 +186,12 @@ void applyEnv(GatewayConfig &config) {
       {"ollama_base_url", "OLLAMA_BASE_URL"},
       {"ollama_model", "OLLAMA_MODEL"},
       {"static_root", "LIGHTAGENT_STATIC_ROOT"},
+      {"knowledge_base_dir", "LIGHTAGENT_KB_DIR"},
+      {"rag_top_k", "LIGHTAGENT_RAG_TOP_K"},
+      {"rag_chunk_size", "LIGHTAGENT_RAG_CHUNK_SIZE"},
+      {"rag_enable_llm_answer", "LIGHTAGENT_RAG_ENABLE_LLM_ANSWER"},
+      {"rag_provider", "LIGHTAGENT_RAG_PROVIDER"},
+      {"rag_max_context_chars", "LIGHTAGENT_RAG_MAX_CONTEXT_CHARS"},
       {"request_timeout_ms", "LIGHTAGENT_REQUEST_TIMEOUT_MS"},
       {"enable_real_gemini", "LIGHTAGENT_ENABLE_REAL_GEMINI"},
       {"enable_real_ollama", "LIGHTAGENT_ENABLE_REAL_OLLAMA"},

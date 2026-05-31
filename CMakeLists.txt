@@ -18,12 +18,14 @@ set(SRCS
     HttpClient.cpp
     HttpData.cpp
     JsonUtil.cpp
+    KnowledgeBase.cpp
     LightAgentGateway.cpp
     LlmProvider.cpp
     Main.cpp
     MockProvider.cpp
     OllamaProvider.cpp
     ProviderFactory.cpp
+    RagEngine.cpp
     Server.cpp
     #ThreadPool.cpp
     Timer.cpp

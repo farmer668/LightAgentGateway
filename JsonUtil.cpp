@@ -1,5 +1,6 @@
 #include "JsonUtil.h"
 
+#include <cctype>
 #include <sstream>
 
 std::string escapeJsonString(std::string_view input) {
@@ -81,6 +82,37 @@ std::optional<std::string> extractJsonStringField(std::string_view body,
     value += ch;
   }
   return std::nullopt;
+}
+
+std::optional<int> extractJsonIntField(std::string_view body,
+                                       std::string_view field) {
+  const std::string quotedField = "\"" + std::string(field) + "\"";
+  size_t pos = body.find(quotedField);
+  if (pos == std::string_view::npos) return std::nullopt;
+
+  pos = body.find(':', pos + quotedField.size());
+  if (pos == std::string_view::npos) return std::nullopt;
+  ++pos;
+  while (pos < body.size() &&
+         (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\r' ||
+          body[pos] == '\n')) {
+    ++pos;
+  }
+  if (pos >= body.size()) return std::nullopt;
+
+  size_t end = pos;
+  if (body[end] == '-') ++end;
+  while (end < body.size() &&
+         std::isdigit(static_cast<unsigned char>(body[end]))) {
+    ++end;
+  }
+  if (end == pos) return std::nullopt;
+
+  try {
+    return std::stoi(std::string(body.substr(pos, end - pos)));
+  } catch (...) {
+    return std::nullopt;
+  }
 }
 
 std::optional<std::string> extractGeminiText(std::string_view responseBody) {

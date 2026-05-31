@@ -1,7 +1,7 @@
 {
   "service_name": "LightAgent Gateway",
-  "version": "0.5.0",
-  "stage": "phase-5",
+  "version": "0.6.0",
+  "stage": "phase-6",
   "default_provider": "mock",
   "fallback_provider": "ollama",
   "gemini_api_key": "",
@@ -12,5 +12,11 @@
   "enable_real_gemini": true,
   "enable_real_ollama": true,
   "enable_ollama_fallback": true,
+  "knowledge_base_dir": "./knowledge_base",
+  "rag_provider": "",
+  "rag_top_k": 3,
+  "rag_chunk_size": 800,
+  "rag_enable_llm_answer": true,
+  "rag_max_context_chars": 3000,
   "request_timeout_ms": 30000
 }

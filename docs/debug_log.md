@@ -590,3 +590,217 @@ curl http://127.0.0.1/api/metrics
 #### 结论
 
 可以在无 Google 网络环境下继续演示本地 AI Gateway 能力。
+
+## Stage 6 Debug Notes
+
+### Issue 1: knowledge_base Directory Not Found
+
+#### 问题现象
+
+首次启动 Stage 6 后，`POST /api/rag/query` 可能返回没有检索到内容，或者本地目录中还看不到知识库文件。
+
+#### 触发命令
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is RAG?"}'
+```
+
+#### 报错信息或异常返回
+
+```json
+{
+  "success": false,
+  "error_message": "no relevant chunks found",
+  "chunks": []
+}
+```
+
+#### 原因分析
+
+`KnowledgeBase::load()` 会按 `knowledge_base_dir` 扫描本地 `.txt` / `.md` 文件。目录不存在时会尝试创建目录，但空目录没有可检索内容。
+
+#### 修复方式
+
+在 `knowledge_base/` 下放入 `.txt` 或 `.md` 文件，或通过 `LIGHTAGENT_KB_DIR` / `config.json` 指向已有知识库目录。
+
+#### 验证命令
+
+```bash
+ls knowledge_base
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"LightAgent Gateway 是什么？","top_k":3}'
+```
+
+#### 验证结果
+
+响应 JSON 中 `chunks` 数组不为空，`retrieved_chunks` 计数大于 0。
+
+### Issue 2: No Chunks Retrieved
+
+#### 问题现象
+
+知识库目录存在，但 `/api/rag/query` 返回 `success=false`，并提示 `no relevant chunks found`。
+
+#### 触发命令
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"完全不相关的问题","top_k":3}'
+```
+
+#### 报错信息或异常返回
+
+```json
+"error_message": "no relevant chunks found"
+```
+
+#### 原因分析
+
+Stage 6 只实现轻量 keyword matching，没有 embedding、向量数据库或语义召回。如果问题关键词没有出现在本地文档 chunk 中，就不会召回内容。
+
+#### 修复方式
+
+调整问题中的关键词，补充知识库文档，或后续 Stage 接入 embedding / vector store。
+
+#### 验证命令
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"RAG retrieval context","top_k":3}'
+```
+
+#### 验证结果
+
+返回的 `chunks` 中包含命中的文件路径、score、start_offset 和 preview。
+
+### Issue 3: Ollama Not Running During RAG
+
+#### 问题现象
+
+`rag_provider=ollama` 或 `default_provider=ollama` 时，RAG 能召回 chunks，但最终回答失败。
+
+#### 触发命令
+
+```bash
+LIGHTAGENT_DEFAULT_PROVIDER="ollama" ./WebServer
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？"}'
+```
+
+#### 报错信息或异常返回
+
+```json
+"error_message": "Ollama request failed: Couldn't connect to server"
+```
+
+#### 原因分析
+
+`RagEngine` 已经完成检索并调用 `OllamaProvider`，但本地 `ollama serve` 没有启动，`http://127.0.0.1:11434/api/generate` 无法连接。
+
+#### 修复方式
+
+启动 Ollama 服务并确认模型已拉取。
+
+```bash
+ollama serve
+ollama pull qwen2.5:0.5b
+```
+
+#### 验证命令
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 LightAgent Gateway？"}'
+```
+
+#### 验证结果
+
+Ollama 正常时，`/api/rag/query` 返回 `success=true`，`provider="ollama"`，并保留 `chunks`。
+
+### Issue 4: Gemini Unavailable During RAG, Fallback to Ollama
+
+#### 问题现象
+
+`rag_provider=gemini` 或 `default_provider=gemini` 时，Gemini 网络不可用，但希望本地 Ollama 接管回答。
+
+#### 触发命令
+
+```bash
+GEMINI_API_KEY="test_or_real_key" \
+LIGHTAGENT_DEFAULT_PROVIDER="gemini" \
+LIGHTAGENT_ENABLE_OLLAMA_FALLBACK="true" \
+./WebServer
+
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 RAG？"}'
+```
+
+#### 报错信息或异常返回
+
+Gemini 网络失败时可能出现 timeout、connection refused 或 DNS/SSL 相关错误。
+
+#### 原因分析
+
+`RagEngine` 会先完成本地检索，再按 provider 调用 LLM。Gemini 失败且 `enable_ollama_fallback=true`、`fallback_provider=ollama` 时，会继续尝试 `OllamaProvider`。
+
+#### 修复方式
+
+确保 Ollama 本地服务可用，或切回 `mock` provider 做无外网演示。
+
+#### 验证命令
+
+```bash
+curl http://127.0.0.1/api/metrics
+```
+
+#### 验证结果
+
+RAG 响应中出现 `fallback_from="gemini"`、`fallback_to="ollama"`；metrics 中 `fallback_count` 增加，`last_rag_provider` 为 `ollama`。
+
+### Issue 5: Oversized Document Skipped
+
+#### 问题现象
+
+某些知识库文件没有出现在 `/api/rag/query` 的 `chunks` 中。
+
+#### 触发命令
+
+```bash
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"大文件中的关键词"}'
+```
+
+#### 报错信息或异常返回
+
+通常表现为 `chunks` 为空或缺少预期文件，不一定有显式错误。
+
+#### 原因分析
+
+Stage 6 为了避免一次性读取过大的本地文件，`KnowledgeBase` 会跳过超过 1MB 的文档；RAG prompt 还会受 `rag_max_context_chars` 限制，超出部分不会进入上下文。
+
+#### 修复方式
+
+将大文档拆成多个较小的 `.md` / `.txt` 文件，或后续优化为流式读取和更细粒度分块。
+
+#### 验证命令
+
+```bash
+find knowledge_base -type f -size +1M
+curl -X POST http://127.0.0.1/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"RAG","top_k":5}'
+```
+
+#### 验证结果
+
+拆分后的文档可以被召回，响应中出现对应文件路径和 chunk preview。
